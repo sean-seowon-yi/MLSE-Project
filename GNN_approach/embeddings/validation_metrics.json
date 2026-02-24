@@ -1,0 +1,101 @@
+{
+  "overall_exact_match_rate": 0.34466019417475735,
+  "overall_group_match_rate": 0.5970873786407767,
+  "per_role_metrics": {
+    "Left Winger": {
+      "exact_match_rate": 0.27,
+      "group_match_rate": 0.45,
+      "count": 20
+    },
+    "Center Forward": {
+      "exact_match_rate": 0.49696969696969695,
+      "group_match_rate": 0.7090909090909092,
+      "count": 33
+    },
+    "Right Defensive Midfield": {
+      "exact_match_rate": 0.028571428571428574,
+      "group_match_rate": 0.6857142857142858,
+      "count": 7
+    },
+    "Left Center Back": {
+      "exact_match_rate": 0.6142857142857144,
+      "group_match_rate": 0.7571428571428572,
+      "count": 14
+    },
+    "Left Forward": {
+      "exact_match_rate": 0.0,
+      "group_match_rate": 0.0,
+      "count": 3
+    },
+    "Left Midfield": {
+      "exact_match_rate": 0.15,
+      "group_match_rate": 0.6,
+      "count": 12
+    },
+    "Right Winger": {
+      "exact_match_rate": 0.16842105263157897,
+      "group_match_rate": 0.4526315789473684,
+      "count": 19
+    },
+    "Right Wing Back": {
+      "exact_match_rate": 0.13333333333333333,
+      "group_match_rate": 0.13333333333333333,
+      "count": 3
+    },
+    "Attacking Midfield": {
+      "exact_match_rate": 0.05000000000000001,
+      "group_match_rate": 0.2833333333333334,
+      "count": 12
+    },
+    "Right Midfield": {
+      "exact_match_rate": 0.16923076923076924,
+      "group_match_rate": 0.38461538461538464,
+      "count": 13
+    },
+    "Right Forward": {
+      "exact_match_rate": 0.0,
+      "group_match_rate": 0.0,
+      "count": 3
+    },
+    "Right Back": {
+      "exact_match_rate": 0.38750000000000007,
+      "group_match_rate": 0.675,
+      "count": 16
+    },
+    "Right Center Back": {
+      "exact_match_rate": 0.4285714285714285,
+      "group_match_rate": 0.7714285714285715,
+      "count": 14
+    },
+    "Goalkeeper": {
+      "exact_match_rate": 1.0,
+      "group_match_rate": 1.0,
+      "count": 13
+    },
+    "Center Back": {
+      "exact_match_rate": 0.2,
+      "group_match_rate": 0.8800000000000001,
+      "count": 5
+    },
+    "Left Back": {
+      "exact_match_rate": 0.6499999999999999,
+      "group_match_rate": 0.775,
+      "count": 8
+    },
+    "Left Wing Back": {
+      "exact_match_rate": 0.06666666666666667,
+      "group_match_rate": 0.13333333333333333,
+      "count": 3
+    },
+    "Left Defensive Midfield": {
+      "exact_match_rate": 0.06666666666666667,
+      "group_match_rate": 0.6,
+      "count": 6
+    },
+    "Defensive Midfield": {
+      "exact_match_rate": 0.1,
+      "group_match_rate": 0.7,
+      "count": 2
+    }
+  }
+}
