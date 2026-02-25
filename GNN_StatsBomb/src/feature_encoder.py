@@ -164,6 +164,8 @@ class EventFeatureEncoder:
             "event_id", "match_id", "competition_id", "season_id",
             "player_id", "player_name", "team_id", "team_name",
             "position_name", "event_type", "period", "minute", "second",
+            "possession_number", "possession_team_id", "possession_team_name",
+            "shot_outcome", "shot_xg",
         ]
         meta = df[[c for c in meta_cols if c in df.columns]].copy().reset_index(drop=True)
 

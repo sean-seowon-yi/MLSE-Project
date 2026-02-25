@@ -22,6 +22,7 @@ build/
 *.out
 *.err.1
 *.out.1
+*.png
 
 # Jupyter
 .ipynb_checkpoints/
@@ -34,11 +35,14 @@ build/
 *.swo
 .DS_Store
 
-# GNN outputs (large; regenerate with main.py --mode prepare)
+# GNN outputs (large; regenerate with main.py / CLI)
 GNN_SkillCorner/processed_data/*.pkl
 GNN_SkillCorner/processed_data/graphs.pkl
 # GNN_SkillCorner/checkpoints/*.pt
 # GNN_SkillCorner/embeddings/*.npy
+
+GNN_StatsBomb/processed_data/*.pkl
+GNN_StatsBomb/checkpoints/*.pt
 
 # Data (large; clone separately per README)
 SkillCorner/

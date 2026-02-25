@@ -214,11 +214,89 @@ class FeatureConfig:
 
 
 @dataclass
+class PossessionConfig:
+    """Phase 2: possession construction parameters."""
+
+    min_events: int = 2
+    max_events: int = 200
+
+@dataclass
+class GraphConfig:
+    """Phase 3: graph construction parameters."""
+
+    latent_dim: int = 64
+    position_embed_dim: int = 16
+
+    use_reverse_temporal: bool = True
+    # Relation triplets enabled by default:
+    #   ("event","next","event"), ("event","prev","event"),
+    #   ("player","acts_in","event"), ("event","performed_by","player"),
+    #   ("player","context_for","event")
+
+
+@dataclass
+class ModelConfig:
+    """Phase 4: GNN encoder hyperparameters."""
+
+    latent_dim: int = 64
+    hidden_dim: int = 128
+    num_heads: int = 4
+    num_layers: int = 2
+    dropout: float = 0.1
+
+    position_embed_dim: int = 16
+    n_positions: int = len(POSITIONS)
+
+    # Action prediction head
+    n_action_types: int = len(EVENT_TYPES)   # 14
+    n_angle_bins: int = 9   # 8 directional sectors + 1 "no-angle" bin
+    n_length_bins: int = 5
+
+
+@dataclass
+class TrainingConfig:
+    """Phase 5: training parameters."""
+
+    batch_size: int = 64
+    num_epochs: int = 10
+    learning_rate: float = 1e-3
+    weight_decay: float = 1e-5
+
+    lambda_outcome: float = 0.5
+    lambda_contrast: float = 1.0
+
+    patience: int = 15
+    min_delta: float = 1e-4
+
+    checkpoint_dir: str = "./checkpoints"
+    save_every_n_epochs: int = 10
+
+    train_ratio: float = 0.7
+    val_ratio: float = 0.15
+    test_ratio: float = 0.15
+
+
+@dataclass
+class InferenceConfig:
+    """Phase 6: inference and similarity search parameters."""
+
+    embedding_output_dir: str = "./embeddings"
+    min_samples_per_player: int = 50
+    top_k: int = 10
+    similarity_metric: str = "cosine"
+
+
+@dataclass
 class Config:
     """Master configuration."""
 
     data: DataConfig = field(default_factory=DataConfig)
     feature: FeatureConfig = field(default_factory=FeatureConfig)
+    possession: PossessionConfig = field(default_factory=PossessionConfig)
+    graph: GraphConfig = field(default_factory=GraphConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+    training: TrainingConfig = field(default_factory=TrainingConfig)
+    inference: InferenceConfig = field(default_factory=InferenceConfig)
 
     def __post_init__(self):
         os.makedirs(self.data.output_dir, exist_ok=True)
