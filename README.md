@@ -3,6 +3,14 @@
 **STA2453 Project: Player Similarity.**  
 Football analytics combining **SkillCorner** tracking data and **StatsBomb** event data for player similarity and tactical analysis.
 
+## Branches
+
+Individual Contributor will create their own branch to work on the project separately. 
+
+# Main Branch Basic Information
+
+This is the global start that may or may not be included in individuals' branches.
+
 ## Repository structure
 
 This repo contains the GNN pipeline, config, and data docs. Scripts, notebooks, and generated reports are **not** tracked (local use only).
