@@ -78,6 +78,7 @@ All coordinates and relevant scalars are normalised/clipped so the matrix has no
 |------|--------|
 | **event_features.npy** | NumPy array of shape `(n_events, 122)`, dtype float32. Row order matches metadata. |
 | **event_metadata.parquet** | One row per event: `event_id`, `match_id`, `competition_id`, `season_id`, `player_id`, `player_name`, `team_id`, `team_name`, `position_name`, `event_type`, `period`, `minute`, `second`. No `freeze_frame` column. |
+| **freeze_frames.pkl** | List of freeze-frame lists (when `use_360=True`), aligned by event index; used in Phase 3. |
 | **feature_names.json** | List of 122 feature names (for slicing/debugging). |
 | **data_stats.json** | Summary: `n_events`, `n_players`, `n_teams`, `n_matches`, `n_competitions`, `feature_dim`, `event_type_counts`, `mirror_sides`, `use_360`. |
 

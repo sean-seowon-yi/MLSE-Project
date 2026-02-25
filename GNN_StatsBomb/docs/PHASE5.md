@@ -1,0 +1,81 @@
+# Phase 5: Training
+
+Phase 5 trains the model with **masked imitation** (predict action from state), **outcome** (shot/goal), and **contrastive** (same player → similar h_player) objectives. Masking is applied at runtime so the model never sees the action or player identity in the input event features.
+
+---
+
+## Goal
+
+- Minimise combined loss over possession graphs.
+- Produce a checkpoint that Phase 6 and Phase 7 use for embeddings and counterfactual predictions.
+
+---
+
+## Masked imitation (runtime masking)
+
+The **dataset** (and inference path) zero out parts of the event feature vector so the model only sees “situational state” and must predict the action. Masked ranges include:
+
+- Event type (0–13) — prediction target.
+- End location, delta, distance/angle (16–22).
+- **Position** (32–57) — player identity; must flow through player node → h_player → z_p.
+- Body part (58–64).
+- All outcome fields (65–94).
+- Action-specific scalars (95, 98–103): duration, pass length, etc.
+
+**Left unmasked**: location (14–15), play pattern (23–31), under_pressure/counterpress (96–97), pitch zone (104–112). Spatial_360 is already zeroed in the stored graph (Phase 3).
+
+---
+
+## Loss function
+
+```
+L = L_action + 0.5 · L_outcome + 1.0 · L_contrastive
+```
+
+- **L_action**: Focal loss (γ=2.0) with class weights (1/√count, mean 1) on action type and length bin; angle bin uses Focal without extra weights.
+- **L_outcome**: BCE for shot/goal head; weight 0.5.
+- **L_contrastive**: InfoNCE on **actor-only** h_player (same player_id across possessions = positive; different player_id = negative). Temperature τ=0.05. Weight 1.0.
+
+Validation loss uses the **same** formula (including contrastive) so early stopping and learning-rate scheduling are consistent with training.
+
+---
+
+## Training details
+
+- Optimiser: Adam (lr=1e-3, weight_decay=1e-5).
+- Scheduler: ReduceLROnPlateau (factor=0.5, patience=5).
+- Gradient clipping: max_norm=1.0.
+- Batch size: 64 possession graphs.
+- Split: 70/15/15 by **match_id** (no match leakage).
+- Early stopping: patience=15, min_delta=1e-4.
+
+---
+
+## Code
+
+| Component | Location |
+|-----------|----------|
+| Trainer loop, validation | `src/phase5_training/trainer.py` |
+| Losses (Focal, contrastive, combined) | `src/phase5_training/losses.py` |
+| Dataset (masking, targets) | `src/phase5_training/dataset.py` |
+| Action targets (bins) | `src/phase5_training/action_targets.py` |
+| CLI entry | `main.py` → `--mode train` |
+
+---
+
+## How to run
+
+```bash
+cd GNN_StatsBomb
+python main.py --mode train
+```
+
+Requires Phase 1–3 outputs (especially `possession_graphs.pkl`). Checkpoints go to `checkpoints/`.
+
+---
+
+## See also
+
+- [../SYSTEM_DESIGN.md](../SYSTEM_DESIGN.md) — Phase 5 (masking rationale, loss formula, audit fixes).
+- [PHASE4.md](PHASE4.md) — Model architecture.
+- [PHASE6.md](PHASE6.md) — Inference (same masking, embedding generation).
