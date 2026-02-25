@@ -25,10 +25,10 @@ build/
 .DS_Store
 
 # GNN outputs (large; regenerate with main.py --mode prepare)
-GNN_approach/processed_data/*.pkl
-GNN_approach/processed_data/graphs.pkl
-# GNN_approach/checkpoints/*.pt
-# GNN_approach/embeddings/*.npy
+GNN_SkillCorner/processed_data/*.pkl
+GNN_SkillCorner/processed_data/graphs.pkl
+# GNN_SkillCorner/checkpoints/*.pt
+# GNN_SkillCorner/embeddings/*.npy
 
 # Data (large; clone separately per README)
 SkillCorner/
@@ -40,4 +40,6 @@ StatsBomb/
 *.zip
 
 # Reports (optional: track PDF/HTML if desired)
-# reports/
+reports/
+notebooks/
+scripts/

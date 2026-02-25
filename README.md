@@ -5,6 +5,8 @@ Football analytics combining **SkillCorner** tracking data and **StatsBomb** eve
 
 ## Repository structure
 
+This repo contains the GNN pipeline, config, and data docs. Scripts, notebooks, and generated reports are **not** tracked (local use only).
+
 ```
 Project/
 ├── README.md                 # This file
@@ -13,41 +15,28 @@ Project/
 ├── docs/                     # Documentation
 │   └── data.md               # SkillCorner & StatsBomb data specs
 │
-├── notebooks/                # Jupyter notebooks (EDA, reports)
-│   ├── eda_data.ipynb
-│   └── eda_report_4page.ipynb
-│
-├── reports/                  # Generated reports (HTML/PDF)
-│   ├── eda_data_no_code.html
-│   ├── eda_data_report.html
-│   ├── eda_report_4page.html
-│   ├── eda_data_no_code.pdf
-│   ├── eda_report.pdf
-│   └── eda_report_4page.pdf
-│
-├── scripts/                  # One-off / utility scripts
-│   └── create_report.py
-│
-├── GNN_approach/             # GNN player similarity pipeline
+├── GNN_SkillCorner/           # GNN player similarity pipeline
 │   ├── README.md
-│   ├── PIPELINE_DETAILS.md
-│   ├── main.py               # Entry point
-│   ├── config.py
-│   ├── data_preparation.py
-│   ├── graph_assembly.py
-│   ├── dataset.py
-│   ├── model.py
-│   ├── train.py
-│   ├── inference.py
-│   ├── utils.py
-│   ├── checkpoints/          # Model checkpoints
-│   ├── embeddings/            # Player profiles, similarity, plots
-│   ├── processed_data/        # Prepared graphs
-│   └── requirements.txt
+│   ├── main.py               # Entry point (run from here)
+│   ├── requirements.txt
+│   ├── docs/
+│   │   └── PIPELINE_DETAILS.md
+│   ├── src/                  # Core package
+│   │   ├── config.py
+│   │   ├── data_preparation.py
+│   │   ├── graph_assembly.py
+│   │   ├── dataset.py
+│   │   ├── model.py
+│   │   ├── train.py
+│   │   ├── inference.py
+│   │   └── utils.py
+│   ├── checkpoints/          # Model checkpoints (generated)
+│   ├── embeddings/           # Player profiles, similarity, plots (generated)
+│   └── processed_data/       # Prepared graphs (generated)
 │
-├── assets/                  # Media (e.g. sample videos)
-├── SkillCorner/             # SkillCorner open data (tracking)
-└── StatsBomb/                # StatsBomb open data (events)
+├── assets/                   # Media (e.g. sample videos; not tracked)
+├── SkillCorner/              # SkillCorner data (not tracked; add locally)
+└── StatsBomb/                # StatsBomb data (not tracked; add locally)
 ```
 
 ## Quick start
@@ -55,31 +44,20 @@ Project/
 ### GNN player similarity (SkillCorner tracking)
 
 ```bash
-cd GNN_approach
+cd GNN_SkillCorner
 pip install -r requirements.txt
 python main.py --mode all --epochs 100
 ```
 
-See `GNN_approach/README.md` and `GNN_approach/PIPELINE_DETAILS.md` for details.
-
-### EDA notebooks
-
-Run notebooks with the **working directory set to the project root** so paths to `SkillCorner/` and `StatsBomb/` resolve:
-
-- Open `notebooks/eda_data.ipynb` or `notebooks/eda_report_4page.ipynb`
-- In Jupyter: set kernel cwd to the project root (e.g. `Project/`)
-
-### Scripts
-
-Run from project root, e.g. `python scripts/create_report.py` (writes output into the current directory).
+See `GNN_SkillCorner/README.md` and `GNN_SkillCorner/docs/PIPELINE_DETAILS.md` for details.
 
 ### Data
 
-- **SkillCorner**: tracking data (10 Hz), A-League matches. See `SkillCorner/README.md`.
-- **StatsBomb**: event data (passes, shots, etc.). See `StatsBomb/README.md`.
+- **SkillCorner**: tracking data (10 Hz), A-League matches. See `SkillCorner/README.md`. Add locally; not in repo.
+- **StatsBomb**: event data (passes, shots, etc.). See `StatsBomb/README.md`. Add locally; not in repo.
 - **Data overview**: `docs/data.md`.
 
 ## Requirements
 
 - Python 3.10+
-- For GNN pipeline: PyTorch, PyTorch Geometric, see `GNN_approach/requirements.txt`
+- For GNN pipeline: PyTorch, PyTorch Geometric, see `GNN_SkillCorner/requirements.txt`

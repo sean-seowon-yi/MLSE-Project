@@ -26,7 +26,7 @@ SkillCorner Open Data - Broadcast tracking data collected through computer visio
 
 ### Directory Structure
 ```
-skillcorner/
+SkillCorner/
 ├── data/
 │   ├── matches.json                    # Match metadata index
 │   ├── matches/                        # Individual match folders
@@ -208,7 +208,7 @@ StatsBomb Open Data - Detailed event data collected through manual annotation an
 
 ### Directory Structure
 ```
-statsbomb/
+StatsBomb/
 ├── data/
 │   ├── competitions.json              # Available competitions and seasons
 │   ├── matches/                       # Match metadata by competition
@@ -426,13 +426,13 @@ These datasets can be combined for comprehensive analysis:
 ## Additional Resources
 
 ### SkillCorner
-- Documentation: See `skillcorner/README.md`
-- Tutorials: Available in `skillcorner/resources/Tutorials/`
+- Documentation: See `SkillCorner/README.md`
+- Tutorials: Available in `SkillCorner/resources/Tutorials/`
 - Dynamic Events Spec: Referenced in README
 - Phases of Play Spec: Referenced in README
 
 ### StatsBomb
-- Documentation: Available in `statsbomb/doc/` directory
+- Documentation: Available in `StatsBomb/doc/` directory
 - Open Data Specification: `StatsBomb Open Data Specification v1.1.pdf`
 - Event Documentation: `Open Data Events v4.0.0.pdf`
 - Lineup Documentation: `Open Data Lineups v2.0.0.pdf`
