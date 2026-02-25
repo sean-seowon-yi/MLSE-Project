@@ -1,23 +1,37 @@
-# MLSE-Project — Similarity Matching across Soccer Players
+# MLSE-Project — Player Similarity in Soccer
 
 **STA2453 Project: Player Similarity.**  
-Football analytics combining **SkillCorner** tracking data and **StatsBomb** event data for player similarity and tactical analysis.
+This repository contains end-to-end pipelines to learn **player embeddings** and find **similar players** in soccer from:
+
+- **SkillCorner** tracking data (10 Hz trajectories), and  
+- **StatsBomb 360** event data (on-ball actions + freeze-frame spatial context).
+
+We define:
+
+> Two players are similar if, when placed in the **same game situation** (location, pressure, teammates/opponents around them), they tend to choose **similar actions**.
+
+Both pipelines ultimately produce:
+
+- A vector embedding `z_p` for each player, and  
+- Tools to rank other players by similarity and interpret *why* they are similar (behavioural and situation-level analysis).
+
+---
 
 ## Repository structure
 
-This repo contains the GNN pipeline, config, and data docs. Scripts, notebooks, and generated reports are **not** tracked (local use only).
+Only configuration, core code, and design docs are tracked. Raw data, intermediate artifacts, and heavy reports are kept local and ignored via `.gitignore`.
 
-```
+```text
 Project/
 ├── README.md                 # This file
 ├── .gitignore
 │
-├── docs/                     # Documentation
-│   └── data.md               # SkillCorner & StatsBomb data specs
+├── docs/                     # Shared documentation
+│   └── data.md               # SkillCorner & StatsBomb data overview
 │
-├── GNN_SkillCorner/           # GNN player similarity pipeline
+├── GNN_SkillCorner/          # GNN player similarity (SkillCorner tracking)
 │   ├── README.md
-│   ├── main.py               # Entry point (run from here)
+│   ├── main.py               # CLI entry point
 │   ├── requirements.txt
 │   ├── docs/
 │   │   └── PIPELINE_DETAILS.md
@@ -34,30 +48,198 @@ Project/
 │   ├── embeddings/           # Player profiles, similarity, plots (generated)
 │   └── processed_data/       # Prepared graphs (generated)
 │
+├── GNN_StatsBomb/            # GNN player similarity (StatsBomb 360 events)
+│   ├── README.md
+│   ├── SYSTEM_DESIGN.md      # Full system design & rationale
+│   ├── main.py               # Multi-phase CLI (Phases 1–7)
+│   ├── requirements.txt
+│   ├── docs/
+│   │   ├── DATA_QUALITY.md   # Data quality & edge cases
+│   │   └── PHASE1.md         # Phase 1: data preparation & encoding
+│   ├── src/
+│   │   ├── config.py
+│   │   ├── data_preparation.py
+│   │   ├── feature_encoder.py
+│   │   ├── phase2_possession/    # Possession grouping
+│   │   ├── phase3_graph/         # Hetero event+player graphs (with 360 context)
+│   │   ├── phase4_model/         # Encoder + FiLM + pooling + heads
+│   │   ├── phase5_training/      # Losses, dataset, trainer
+│   │   ├── phase6_inference/     # z_p generation + similarity search
+│   │   └── phase7_analysis/      # Situation-level counterfactual analysis
+│   ├── checkpoints/          # Model checkpoints (generated)
+│   ├── embeddings/           # Player embeddings, reports, PCA plots (generated)
+│   └── processed_data/       # Encoded events, possessions, graphs (generated)
+│
 ├── assets/                   # Media (e.g. sample videos; not tracked)
-├── SkillCorner/              # SkillCorner data (not tracked; add locally)
-└── StatsBomb/                # StatsBomb data (not tracked; add locally)
+├── SkillCorner/              # SkillCorner data (local only; not tracked)
+└── StatsBomb/                # StatsBomb data (local only; not tracked)
 ```
+
+---
 
 ## Quick start
 
-### GNN player similarity (SkillCorner tracking)
+### 1. GNN player similarity — SkillCorner tracking
+
+This is the original pipeline built around tracking data.
 
 ```bash
 cd GNN_SkillCorner
 pip install -r requirements.txt
+
+# Full pipeline (data prep → graphs → train → embeddings)
 python main.py --mode all --epochs 100
 ```
 
-See `GNN_SkillCorner/README.md` and `GNN_SkillCorner/docs/PIPELINE_DETAILS.md` for details.
+See:
 
-### Data
+- `GNN_SkillCorner/README.md`  
+- `GNN_SkillCorner/docs/PIPELINE_DETAILS.md`
 
-- **SkillCorner**: tracking data (10 Hz), A-League matches. See `SkillCorner/README.md`. Add locally; not in repo.
-- **StatsBomb**: event data (passes, shots, etc.). See `StatsBomb/README.md`. Add locally; not in repo.
-- **Data overview**: `docs/data.md`.
+for detailed phase descriptions and model internals.
+
+---
+
+### 2. GNN player similarity — StatsBomb 360 (event + spatial context)
+
+This is the newer pipeline designed around **StatsBomb 360** and the strict definition:
+
+> similar = "would act similarly if put in the same situation".
+
+```bash
+cd GNN_StatsBomb
+pip install -r requirements.txt
+```
+
+**Run the full pipeline (Phases 1 → 6A):**
+
+```bash
+python main.py --mode full_pipeline
+```
+
+This will:
+
+1. **prepare** — load events + 360, encode 122-D event features, save metadata & freeze frames  
+2. **build_possessions** — group events into StatsBomb possessions  
+3. **build_graphs** — build heterogeneous event+player graphs per possession  
+4. **train** — train the GNN with masked imitation + auxiliary objectives  
+5. **inference** — generate global player embeddings `z_p` (one per player)
+
+Once embeddings exist, you can:
+
+**Search for similar players:**
+
+```bash
+python main.py --mode search --player_id <STATS_BOMB_PLAYER_ID>
+```
+
+**Run situation-level analysis (Phase 7):**
+
+```bash
+python main.py --mode analyze
+```
+
+Phase 7:
+
+- Picks query players and their nearest neighbours in embedding space.  
+- Samples real game situations (events) from the query player.  
+- For each situation, compares **predicted action distributions** (type, direction, length) of the query vs candidates, holding the state fixed.  
+- Saves text reports and visualisations (bar charts, direction plots, PCA neighbourhoods) under `GNN_StatsBomb/embeddings/analysis/`.
+
+For full design details (data, model, loss functions, masking, graph structure, assumptions), see:
+
+- `GNN_StatsBomb/SYSTEM_DESIGN.md`
+
+which is kept aligned with the current implementation.
+
+---
+
+## Data
+
+### SkillCorner
+
+- Tracking data at 10 Hz (player and ball positions).
+- Add locally under `SkillCorner/` according to its own README (not tracked in git).
+- Used exclusively by `GNN_SkillCorner`.
+
+### StatsBomb & StatsBomb 360
+
+- Open-data repository: (see `StatsBomb/README.md` for exact instructions).
+- Expected layout under `StatsBomb/data/`:
+  - `events/{match_id}.json`
+  - `three-sixty/{match_id}.json` (for matches with 360 freeze frames)
+  - `matches/`, `competitions.json`, etc.
+- `GNN_StatsBomb` defaults to `../StatsBomb/data` (configurable via `src/config.py`).
+
+`GNN_StatsBomb` uses **StatsBomb 360** by default:
+
+- Regular event data provides event type, locations, outcomes, xG, pressure, etc.
+- 360 adds a per-event **freeze frame**: positions of visible teammates, opponents, and keeper.  
+  This is critical for defining the *situation* (pressure, options, density) behind each action.
+
+### Shared data docs
+
+- See `docs/data.md` for a high-level summary of all sources and how they relate.
+
+---
 
 ## Requirements
 
-- Python 3.10+
-- For GNN pipeline: PyTorch, PyTorch Geometric, see `GNN_SkillCorner/requirements.txt`
+- Python **3.10+**
+
+Recommended environment workflow:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+```
+
+Install dependencies for each pipeline:
+
+- **SkillCorner GNN:**
+
+  ```bash
+  cd GNN_SkillCorner
+  pip install -r requirements.txt
+  ```
+
+- **StatsBomb 360 GNN:**
+
+  ```bash
+  cd GNN_StatsBomb
+  pip install -r requirements.txt
+  ```
+
+Each `requirements.txt` pins the necessary versions of:
+
+- PyTorch, PyTorch Geometric, and friends  
+- Numerical stack: `numpy`, `pandas`, `scikit-learn`  
+- Visualisation and utilities: `matplotlib`, `seaborn`, `tqdm`, etc.
+
+---
+
+## High-level goals & design principles
+
+Across both pipelines, the core goals are:
+
+- **Situation-aware similarity**:  
+  Player embeddings must encode *how* players act given context, not just where they are on the pitch.
+
+- **Role and sidedness awareness**:  
+  Positions like Left Wing and Right Wing are kept distinct in the StatsBomb pipeline to respect preferred foot and tactical side. Mirroring is only used as an optional analysis trick, not during training.
+
+- **Strong masking to avoid label leakage** (StatsBomb 360):  
+  For imitation learning, any feature that directly reveals the action or its outcome (event type, end location, outcomes, xG, etc.) is masked from the GNN input at training and inference time. Only pre-action state and spatial context remain, forcing the model to genuinely learn *decision-making*.
+
+- **Graph-based reasoning** (StatsBomb 360):  
+  Possessions are encoded as heterogeneous graphs with:
+  - Event nodes (122-D features, with Spatial_360 zeroed for the GNN).  
+  - Player nodes (role embedding + team flag + relative geometry).  
+  - Temporal, actor, and context edges (including off-ball players from 360).
+  This lets the GNN reason jointly about sequence, actors, and surrounding players.
+
+- **Player-level aggregation & similarity**:  
+  Per-possession player embeddings are pooled with **attention** to form global `z_p` vectors. Similarity search is then simple cosine similarity in this embedding space, with filters on position group and sample size for robustness.
+
+The **StatsBomb 360** pipeline is the most faithful implementation of the “same situation, same action” notion and is documented in detail in `GNN_StatsBomb/SYSTEM_DESIGN.md`. Use that file alongside this README when working on or extending the system.
+
