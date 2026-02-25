@@ -46,7 +46,7 @@ class GraphConfig:
     """Configuration for graph construction."""
     
     # Node features
-    node_feature_dim: int = 9  # [x, y, vx, vy, sprint_flag, team_id, dist_to_ball, dist_to_own_goal, dist_to_opp_goal]
+    node_feature_dim: int = 9  # [x, y, vx, vy, sprint_flag, team_flag, dist_to_ball, dist_to_own_goal, dist_to_opp_goal]
     
     # Edge configuration
     fully_connected: bool = True  # Connect all nodes to all others

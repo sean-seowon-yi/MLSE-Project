@@ -12,6 +12,16 @@ ENV/
 .eggs/
 dist/
 build/
+*.npy
+*.parquet
+*.json
+*.csv
+*.txt
+*.log
+*.err
+*.out
+*.err.1
+*.out.1
 
 # Jupyter
 .ipynb_checkpoints/

@@ -94,10 +94,9 @@ class GraphAssembler:
         own_goal_x, own_goal_y = -1.0, 0.0
         opp_goal_x, opp_goal_y = 1.0, 0.0
         
-        # Normalize ball coordinates to [-1, 1] range (assuming they're in meters)
-        # Ball coordinates from frame are in raw meters, need to normalize
-        norm_ball_x = ball_x / 52.5 if abs(ball_x) <= 52.5 else (1.0 if ball_x > 0 else -1.0)
-        norm_ball_y = ball_y / 34.0 if abs(ball_y) <= 34.0 else (1.0 if ball_y > 0 else -1.0)
+        # Ball is already normalized in [-1, 1] by data_preparation (team-aware)
+        norm_ball_x = ball_x
+        norm_ball_y = ball_y
         
         for player in players:
             # Position features

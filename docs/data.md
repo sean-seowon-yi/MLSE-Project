@@ -359,9 +359,9 @@ StatsBomb/
 
 #### 5. `three-sixty/{match_id}.json` (if available)
 **Format**: JSON array  
-**Content**: Spatial context data for selected events
+**Content**: Spatial context data for selected events (freeze frames: positions of other players at each event moment).
 
-**Note**: Not all matches have 360 data available. Check `match_available_360` in competitions.json.
+**Note**: Not all matches have 360 data available. Check `match_available_360` in competitions.json. The **GNN_StatsBomb** pipeline uses 360 by default: only matches with a `three-sixty/{match_id}.json` file are loaded, and only events that have a 360 frame are kept, so that player similarity can use spatial context (teammates/opponents around the ball).
 
 ### Coordinate System
 - **X-axis**: 0-120 (length of field)

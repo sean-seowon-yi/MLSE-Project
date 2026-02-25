@@ -287,10 +287,18 @@ class SkillCornerDataLoader:
                 # Get attacking direction for this period
                 home_attacking_dir = self._get_attacking_direction(metadata, period)
                 
-                # Get ball data
+                # Get ball data and normalize to same coordinate system as players
+                # (team-aware: flip when home attacks left so ball is in "attack right" space)
                 ball_data = frame.get('ball_data', {})
-                ball_x = ball_data.get('x', 0.0)
-                ball_y = ball_data.get('y', 0.0)
+                raw_ball_x = ball_data.get('x', 0.0)
+                raw_ball_y = ball_data.get('y', 0.0)
+                ball_x, ball_y = self._normalize_coordinates(
+                    raw_ball_x, raw_ball_y,
+                    is_home_team=True,  # Use home perspective for ball (consistent ref)
+                    home_attacking_direction=home_attacking_dir,
+                    pitch_length=pitch_length,
+                    pitch_width=pitch_width
+                )
                 
                 # Process each player
                 players = []
@@ -327,10 +335,17 @@ class SkillCornerDataLoader:
                     else:
                         prev_norm_x, prev_norm_y = None, None
                     
-                    # Compute velocity
-                    vx, vy, speed = self._compute_velocity(
+                    # Compute velocity (normalized coords for vx, vy in graph)
+                    vx, vy, _ = self._compute_velocity(
                         norm_x, norm_y, prev_norm_x, prev_norm_y
                     )
+                    # Speed in m/s for sprint flag (doc: sprint_threshold 7.0 m/s)
+                    if prev_pos is not None:
+                        raw_dx = raw_x - prev_pos[0]
+                        raw_dy = raw_y - prev_pos[1]
+                        speed_ms = np.sqrt(raw_dx**2 + raw_dy**2) / 0.1
+                    else:
+                        speed_ms = 0.0
                     
                     # Create player frame
                     player_frame = PlayerFrame(
@@ -340,8 +355,8 @@ class SkillCornerDataLoader:
                         y=norm_y,
                         vx=vx,
                         vy=vy,
-                        speed=speed,
-                        is_sprinting=self._is_sprinting(speed),
+                        speed=speed_ms,
+                        is_sprinting=self._is_sprinting(speed_ms),
                         is_home_team=info['is_home_team'],
                         role_name=info['role_name'],
                         trackable_object=info.get('trackable_object', player_id_in_tracking)
