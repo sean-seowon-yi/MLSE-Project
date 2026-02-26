@@ -1,6 +1,6 @@
 # Phase 5: Training
 
-Phase 5 trains the model with **masked imitation** (predict action from state), **outcome** (shot/goal), and **contrastive** (same player → similar h_player) objectives. Masking is applied at runtime so the model never sees the action or player identity in the input event features.
+Phase 5 trains the model with **masked imitation** (predict action from state), **outcome** (shot/goal), **contrastive** (same player → similar h_player, hard negatives), and **pooled uniformity** (spread pooled z_p on the hypersphere) objectives. Masking is applied at runtime so the model never sees the action or player identity in the input event features.
 
 ---
 
@@ -29,14 +29,18 @@ The **dataset** (and inference path) zero out parts of the event feature vector 
 ## Loss function
 
 ```
-L = L_action + 0.5 · L_outcome + 1.0 · L_contrastive
+L = L_action + 0.5 · L_outcome + 0.5 · L_contrastive + 0.3 · L_pooled_uniformity
 ```
 
 - **L_action**: Focal loss (γ=2.0) with class weights (1/√count, mean 1) on action type and length bin; angle bin uses Focal without extra weights.
 - **L_outcome**: BCE for shot/goal head; weight 0.5.
-- **L_contrastive**: InfoNCE on **actor-only** h_player (same player_id across possessions = positive; different player_id = negative). Temperature τ=0.05. Weight 1.0.
+- **L_contrastive**: InfoNCE on **actor-only** `h_player` with **same-position-group hard negatives**:
+  - Positives: same `player_id` across different events/possessions in the batch.
+  - Negatives: different `player_id`s in the **same coarse position group** (GK / Defender / Midfielder / Forward / Unknown), using the `POSITION_IDX_TO_GROUP` mapping. If a row has no same-group negatives, it falls back to all different-player pairs.
+  - Temperature τ=0.05. Weight 0.5.
+- **L_pooled_uniformity**: Gaussian-potential uniformity loss on **pooled `z_p`** (the embeddings used for similarity search). Pushes all player embeddings apart on the unit hypersphere to widen cosine similarity gaps and prevent embedding collapse. Weight 0.3.
 
-Validation loss uses the **same** formula (including contrastive) so early stopping and learning-rate scheduling are consistent with training.
+Validation loss uses the **same** formula (including contrastive and pooled uniformity) so early stopping and learning-rate scheduling are consistent with training.
 
 ---
 
@@ -45,7 +49,7 @@ Validation loss uses the **same** formula (including contrastive) so early stopp
 - Optimiser: Adam (lr=1e-3, weight_decay=1e-5).
 - Scheduler: ReduceLROnPlateau (factor=0.5, patience=5).
 - Gradient clipping: max_norm=1.0.
-- Batch size: 64 possession graphs.
+- Batch size: 96 possession graphs.
 - Split: 70/15/15 by **match_id** (no match leakage).
 - Early stopping: patience=15, min_delta=1e-4.
 

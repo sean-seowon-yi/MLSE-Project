@@ -19,9 +19,11 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from ..config import TrainingConfig
+from ..config import TrainingConfig, POSITION_IDX_TO_GROUP
 from ..phase4_model.model import PlayerSimilarityModel
 from .losses import CombinedLoss
+
+_POS_TO_GROUP_T = torch.tensor(POSITION_IDX_TO_GROUP, dtype=torch.long)
 
 
 class Trainer:
@@ -66,6 +68,7 @@ class Trainer:
         self.criterion = CombinedLoss(
             lambda_outcome=config.lambda_outcome,
             lambda_contrast=config.lambda_contrast,
+            lambda_pooled_contrast=config.lambda_pooled_contrast,
         ).to(self.device)
 
         self.best_val_loss = float("inf")
@@ -75,6 +78,7 @@ class Trainer:
             "train_action": [],
             "train_outcome": [],
             "train_contrastive": [],
+            "train_pooled_uniform": [],
             "val_total": [],
             "learning_rate": [],
         }
@@ -104,13 +108,15 @@ class Trainer:
             self.history["train_action"].append(train_losses["action"])
             self.history["train_outcome"].append(train_losses["outcome"])
             self.history["train_contrastive"].append(train_losses["contrastive"])
+            self.history["train_pooled_uniform"].append(train_losses["pooled_uniform"])
             self.history["val_total"].append(val_loss)
             self.history["learning_rate"].append(lr)
 
             print(f"Train — total: {train_losses['total']:.4f}  "
                   f"action: {train_losses['action']:.4f}  "
                   f"outcome: {train_losses['outcome']:.4f}  "
-                  f"contrast: {train_losses['contrastive']:.4f}")
+                  f"contrast: {train_losses['contrastive']:.4f}  "
+                  f"uniform: {train_losses['pooled_uniform']:.4f}")
             print(f"Val   — total: {val_loss:.4f}   LR: {lr:.6f}")
 
             if val_loss < self.best_val_loss - self.config.min_delta:
@@ -137,7 +143,7 @@ class Trainer:
 
     def _train_epoch(self) -> Dict[str, float]:
         self.model.train()
-        accum = {"total": 0.0, "action": 0.0, "outcome": 0.0, "contrastive": 0.0}
+        accum = {"total": 0.0, "action": 0.0, "outcome": 0.0, "contrastive": 0.0, "pooled_uniform": 0.0}
         n_batches = 0
 
         for batch in tqdm(self.train_loader, desc="Training", leave=False):
@@ -165,18 +171,26 @@ class Trainer:
             counts = counts.clamp(min=1.0)
             outcome_logits = outcome_logits / counts
 
-            # Contrastive loss on h_player (pre-pooling): same player across
-            # possessions should get similar GNN embeddings.  FiLM + action
-            # loss handle between-player differentiation at the z_p level.
+            # Contrastive loss on pre-pooling h_player with hard negatives.
+            # h_player has one entry per player node in the batch; the same
+            # player_id can appear in multiple possessions, giving positive
+            # pairs.  Position groups restrict negatives to same-role players.
             player_node_pids = data["player"].player_node_pids if hasattr(data["player"], "player_node_pids") else None
 
             cont_emb = None
             cont_pids = None
+            cont_pos_groups = None
             if player_node_pids is not None:
                 actor_mask = player_node_pids >= 0
                 if actor_mask.any():
                     cont_emb = outputs["h_player"][actor_mask]
                     cont_pids = player_node_pids[actor_mask]
+                    pos_group_map = _POS_TO_GROUP_T.to(self.device)
+                    n_pos = pos_group_map.shape[0]
+                    actor_pos_idx = data["player"].x[actor_mask, 0].long().clamp(0, n_pos - 1)
+                    cont_pos_groups = pos_group_map[actor_pos_idx]
+
+            pooled_emb = outputs.get("pooled_z_p")
 
             losses = self.criterion(
                 preds={
@@ -189,6 +203,8 @@ class Trainer:
                 outcome_targets=outcome_targets,
                 contrastive_embeddings=cont_emb,
                 contrastive_player_ids=cont_pids,
+                contrastive_position_groups=cont_pos_groups,
+                pooled_embeddings=pooled_emb,
             )
 
             losses["total"].backward()
@@ -227,11 +243,18 @@ class Trainer:
             player_node_pids = data["player"].player_node_pids if hasattr(data["player"], "player_node_pids") else None
             cont_emb = None
             cont_pids = None
+            cont_pos_groups = None
             if player_node_pids is not None:
                 actor_mask = player_node_pids >= 0
                 if actor_mask.any():
                     cont_emb = outputs["h_player"][actor_mask]
                     cont_pids = player_node_pids[actor_mask]
+                    pos_group_map = _POS_TO_GROUP_T.to(self.device)
+                    n_pos = pos_group_map.shape[0]
+                    actor_pos_idx = data["player"].x[actor_mask, 0].long().clamp(0, n_pos - 1)
+                    cont_pos_groups = pos_group_map[actor_pos_idx]
+
+            pooled_emb = outputs.get("pooled_z_p")
 
             losses = self.criterion(
                 preds={
@@ -244,6 +267,8 @@ class Trainer:
                 outcome_targets=outcome_targets,
                 contrastive_embeddings=cont_emb,
                 contrastive_player_ids=cont_pids,
+                contrastive_position_groups=cont_pos_groups,
+                pooled_embeddings=pooled_emb,
             )
             total_loss += losses["total"].item()
             n_batches += 1

@@ -208,7 +208,7 @@ class ReportBuilder:
 
         # ── save text report ──
         report_path = output_dir / f"report_{query_pid}.txt"
-        with open(report_path, "w") as f:
+        with open(report_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
 
         # ── PCA neighbourhood ──

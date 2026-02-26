@@ -106,10 +106,15 @@ class OutcomePredictionLoss(nn.Module):
 
 class ContrastiveLoss(nn.Module):
     """
-    InfoNCE-style contrastive loss (auxiliary).
+    InfoNCE-style contrastive loss with hard negatives (auxiliary).
 
     Positives:  same player_id across different possessions within the batch.
-    Negatives:  different player_ids within the batch.
+    Negatives:  different player_ids **in the same position group** within the
+                batch.  This forces the model to separate players who share a
+                positional role rather than relying on easy cross-role negatives.
+
+    When no position-group information is supplied the loss falls back to
+    using all different-player pairs as negatives (original behaviour).
     """
 
     def __init__(self, temperature: float = 0.05):
@@ -120,12 +125,14 @@ class ContrastiveLoss(nn.Module):
         self,
         embeddings: torch.Tensor,
         player_ids: torch.Tensor,
+        position_groups: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
-        embeddings: (N, d)  — player-level embeddings within a batch.
-        player_ids: (N,)    — player IDs so we know who matches whom.
-
-        For each anchor, positives are other embeddings of the same player.
+        embeddings      : (N, d)  — player-level embeddings within a batch.
+        player_ids      : (N,)    — player IDs so we know who matches whom.
+        position_groups : (N,)    — coarse position-group index per player
+                                    (0=GK, 1=Def, 2=Mid, 3=Fwd, 4=Unknown).
+                                    If None, all negatives are used.
         """
         if embeddings.shape[0] < 2:
             return torch.tensor(0.0, device=embeddings.device)
@@ -133,7 +140,6 @@ class ContrastiveLoss(nn.Module):
         emb = F.normalize(embeddings, dim=-1)
         sim = emb @ emb.T / self.temperature  # (N, N)
 
-        # Positive mask: same player, different sample
         pid = player_ids.unsqueeze(0)  # (1, N)
         pos_mask = (pid == pid.T).float()
         pos_mask.fill_diagonal_(0.0)
@@ -141,35 +147,86 @@ class ContrastiveLoss(nn.Module):
         if pos_mask.sum() == 0:
             return torch.tensor(0.0, device=embeddings.device)
 
-        # Log-sum-exp over all negatives (everything except self)
-        neg_mask = torch.ones_like(sim)
-        neg_mask.fill_diagonal_(0.0)
-        log_denom = torch.logsumexp(sim * neg_mask + (1 - neg_mask) * (-1e9), dim=-1)
+        # Hard-negative mask: only consider negatives from the same position
+        # group so the loss pushes apart players with similar roles.
+        if position_groups is not None:
+            pg = position_groups.unsqueeze(0)  # (1, N)
+            same_group = (pg == pg.T).float()  # (N, N)
+        else:
+            same_group = torch.ones_like(sim)
 
-        # Mean of positive log-probs
-        log_num = sim  # numerator logits
-        pos_logprob = log_num - log_denom.unsqueeze(-1)
+        # Negative mask: same group, different player, not self
+        neg_mask = same_group * (1.0 - (pid == pid.T).float())
+        neg_mask.fill_diagonal_(0.0)
+
+        # If an anchor has zero valid negatives in its group, fall back to
+        # all-player negatives for that row to avoid -inf in logsumexp.
+        has_neg = neg_mask.sum(dim=-1) > 0
+        if not has_neg.all():
+            fallback = torch.ones_like(sim)
+            fallback.fill_diagonal_(0.0)
+            neg_mask = torch.where(
+                has_neg.unsqueeze(-1), neg_mask, fallback,
+            )
+
+        log_denom = torch.logsumexp(
+            sim * neg_mask + (1 - neg_mask) * (-1e9), dim=-1,
+        )
+
+        pos_logprob = sim - log_denom.unsqueeze(-1)
         loss = -(pos_logprob * pos_mask).sum() / pos_mask.sum()
 
+        return loss
+
+
+class PooledUniformityLoss(nn.Module):
+    """Push pooled z_p vectors apart on the unit hypersphere.
+
+    Uses the Gaussian-potential uniformity loss from Wang & Isola (2020):
+        L_uniform = log E[ exp(-t · ||z_i - z_j||^2) ]
+    where the expectation is over all pairs i ≠ j and *t* controls
+    sensitivity (higher *t* → stronger penalty on close pairs).
+
+    This directly widens cosine gaps between pooled player embeddings
+    in the space used for similarity search.
+    """
+
+    def __init__(self, t: float = 2.0):
+        super().__init__()
+        self.t = t
+
+    def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
+        if embeddings.shape[0] < 2:
+            return torch.tensor(0.0, device=embeddings.device)
+        z = F.normalize(embeddings, dim=-1)
+        sq_dists = torch.cdist(z, z, p=2).pow(2)
+        n = z.shape[0]
+        mask = 1.0 - torch.eye(n, device=z.device)
+        exp_vals = torch.exp(-self.t * sq_dists) * mask
+        loss = torch.log(exp_vals.sum() / mask.sum())
         return loss
 
 
 class CombinedLoss(nn.Module):
     """
     L = L_action + λ_outcome · L_outcome + λ_contrast · L_contrast
+                 + λ_pooled · L_pooled_uniformity
     """
 
     def __init__(
         self,
         lambda_outcome: float = 0.5,
-        lambda_contrast: float = 1.0,
+        lambda_contrast: float = 0.3,
+        lambda_pooled_contrast: float = 0.3,
     ):
         super().__init__()
         self.action_loss = ActionPredictionLoss()
         self.outcome_loss = OutcomePredictionLoss()
         self.contrastive_loss = ContrastiveLoss()
+        self.pooled_uniformity_loss = PooledUniformityLoss()
         self.lambda_outcome = lambda_outcome
         self.lambda_contrast = lambda_contrast
+        self.lambda_pooled_contrast = lambda_pooled_contrast
 
     def forward(
         self,
@@ -179,9 +236,12 @@ class CombinedLoss(nn.Module):
         outcome_targets: Optional[torch.Tensor] = None,
         contrastive_embeddings: Optional[torch.Tensor] = None,
         contrastive_player_ids: Optional[torch.Tensor] = None,
+        contrastive_position_groups: Optional[torch.Tensor] = None,
+        pooled_embeddings: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
-        Returns dict with "total", "action", "outcome", "contrastive" losses.
+        Returns dict with "total", "action", "outcome", "contrastive",
+        and "pooled_uniform" losses.
         """
         l_action = self.action_loss(preds, action_targets)
         total = l_action.clone()
@@ -194,13 +254,21 @@ class CombinedLoss(nn.Module):
         l_contrast = torch.tensor(0.0, device=l_action.device)
         if contrastive_embeddings is not None and contrastive_player_ids is not None:
             l_contrast = self.contrastive_loss(
-                contrastive_embeddings, contrastive_player_ids
+                contrastive_embeddings,
+                contrastive_player_ids,
+                contrastive_position_groups,
             )
             total = total + self.lambda_contrast * l_contrast
+
+        l_pooled = torch.tensor(0.0, device=l_action.device)
+        if pooled_embeddings is not None and pooled_embeddings.shape[0] >= 2:
+            l_pooled = self.pooled_uniformity_loss(pooled_embeddings)
+            total = total + self.lambda_pooled_contrast * l_pooled
 
         return {
             "total": total,
             "action": l_action,
             "outcome": l_outcome,
             "contrastive": l_contrast,
+            "pooled_uniform": l_pooled,
         }

@@ -198,19 +198,23 @@ This is trained end-to-end — gradients flow from action prediction through `z_
 
 At inference time, the same pooling aggregates across all of a player's possessions to produce a single global `z_p`.
 
-#### 4. FiLM Conditioning (player → action prediction)
+#### 4. FiLM Conditioning (player + position → action prediction)
 
-To predict what action a player would take in a given situation, the model uses **Feature-wise Linear Modulation (FiLM)**:
+To predict what action a player would take in a given situation, the model uses **Feature-wise Linear Modulation (FiLM)** with a **dual-channel position design**:
 
 ```
-γ = Linear(z_p)          →  per-dimension scale
-β = Linear(z_p)          →  per-dimension shift
+pos_emb = Embedding(position_idx)        →  16-D position embedding
+cond    = [z_p ; pos_emb]               →  (64 + 16 = 80)-D conditioning vector
+γ       = Linear(cond)                   →  per-dimension scale
+β       = Linear(cond)                   →  per-dimension shift
 h_conditioned = (1 + γ) ⊙ h_event + β
 ```
 
 This is then passed to the action prediction heads (action type, direction, length).
 
 **Why FiLM instead of concatenation**: With simple concatenation `[h_event; z_p]` → Linear, the model can learn to ignore `z_p` by assigning it near-zero weights, relying on `h_event` alone. FiLM creates **multiplicative dependence**: if `z_p` is the same for two players, they get *identical predictions in every situation*. The model is forced to differentiate `z_p` to explain any player-level behavioral variation. This makes z_p truly load-bearing.
+
+**Dual-channel position design**: Position enters `z_p` through the player-node path (`PlayerProjection` position embedding → GNN → `h_player` → attention pool → `z_p`), retaining coarse role structure (e.g. GK far from outfield). It *also* enters FiLM through a separate, dedicated embedding, which sharpens within-role prediction without requiring `z_p` to carry the full positional burden. The pooled uniformity loss provides a direct gradient signal on `z_p` that prevents the model from collapsing all embeddings despite the FiLM shortcut.
 
 #### 5. Prediction Heads
 
@@ -256,7 +260,7 @@ What survives masking (the "situational state"):
 The total loss is:
 
 ```
-L = L_action + 0.5 · L_outcome + 1.0 · L_contrastive
+L = L_action + 0.5 · L_outcome + 0.5 · L_contrastive + 0.3 · L_pooled_uniformity
 ```
 
 #### L_action: Focal Loss with Class Weights
@@ -273,28 +277,44 @@ Class weights (`1/√(count)`, normalised to mean 1) are applied to action type 
 
 BCE on the shot/goal prediction head. Weight: 0.5.
 
-#### L_contrastive: InfoNCE on h_player
+#### L_contrastive: InfoNCE on actor-only h_player with hard negatives
 
-InfoNCE contrastive loss applied to actor-only `h_player` embeddings (off-ball 360 players are excluded since they lack player IDs needed to form positive/negative pairs):
+InfoNCE contrastive loss applied to **actor-only `h_player` embeddings** with **same-position-group hard negatives**:
 
 ```
-sim(i,j) = normalize(h_i) · normalize(h_j) / τ       where τ = 0.05
+sim(i,j) = normalize(z_i) · normalize(z_j) / τ       where τ = 0.05
 ```
 
-- **Positives**: Same player_id appearing across different possessions within the batch
-- **Negatives**: Different player_ids
+- **Positives**: Same `player_id` appearing across different events / possessions within the batch (multiple `h_player` rows for the same player).
+- **Negatives**: Different `player_id`s **in the same coarse position group** (GK / Defender / Midfielder / Forward / Unknown), using the `POSITION_IDX_TO_GROUP` mapping derived from `POSITIONS`. When no same-group negatives exist for an anchor, all different-player pairs are used as fallback.
 
-This serves a complementary role to the action loss:
+Hard negatives prevent the loss from being satisfied by merely encoding positional role. The model must learn fine-grained individual differences within each role.
 
-- **Contrastive loss**: Ensures same-player GNN representations are consistent across different possessions and different-player representations are separated. Shapes the quality of `h_player`.
-- **Action loss via FiLM**: Forces `z_p` (the pooled, global embedding) to capture behavioral differences between players, because predictions are multiplicatively dependent on it.
+#### L_pooled_uniformity: Gaussian-potential uniformity on pooled z_p
+
+Directly penalises pooled `z_p` vectors (the embeddings used for similarity search) that are too close on the unit hypersphere:
+
+```
+L_uniform = log E[ exp(-t · ||z_i - z_j||^2) ]     where t = 2.0
+```
+
+The expectation is over all pairs of distinct pooled players in the batch. This loss pushes all `z_p` vectors apart, widening cosine similarity gaps so that "similar" and "dissimilar" players occupy meaningfully different regions. Without it, pooled `z_p` can collapse into a narrow cone (cosine > 0.99 for all pairs) because the attention pooling averaging effect concentrates vectors toward the population mean.
+
+Weight: 0.3.
+
+#### How the four loss terms complement each other
+
+- **Contrastive (h_player)**: Within-batch alignment (same player → close) and within-role separation (different players in same position group → apart). Operates on pre-pooling embeddings where positive pairs exist.
+- **Pooled uniformity (z_p)**: Spreads pooled embeddings uniformly on the hypersphere, directly improving the cosine similarity space used for downstream search. Re-establishes cross-role separation (e.g., GK far from outfield).
+- **Action loss via FiLM**: Forces `z_p` to capture behavioral differences between players, because predictions are multiplicatively dependent on it.
+- **Outcome loss**: Provides a secondary signal to shape event representations toward possession-level outcomes.
 
 ### Training Details
 
 - Optimiser: Adam (lr=1e-3, weight_decay=1e-5)
 - Scheduler: ReduceLROnPlateau (factor=0.5, patience=5)
 - Gradient clipping: max_norm=1.0
-- Batch size: 64 possession graphs
+- Batch size: 96 possession graphs
 - Data split: 70/15/15 by match_id (prevents leakage — all possessions from a given match go to the same split, so the model cannot memorise match-specific patterns and leak them across train/val/test)
 - Early stopping: patience=15, min_delta=1e-4
 - **Test-set evaluation** (`--mode evaluate`): After training, the best checkpoint can be evaluated on the held-out test set (same split, seed=42). Metrics: action type / angle bin / length bin accuracy and macro F1, plus outcome accuracy, BCE, and AUC-ROC for ends_in_shot and ends_in_goal. Outputs: `checkpoints/evaluation/test_metrics.json` and confusion-matrix and ROC plots. See `docs/PHASE5.md` and `src/phase5_training/evaluator.py`.
@@ -415,12 +435,14 @@ For these reasons, score is not included. If future analysis suggests score cont
 | `n_action_types` | 14 | Action type classes |
 | `n_angle_bins` | 9 | Direction bins (8 sectors + no-angle) |
 | `n_length_bins` | 5 | Displacement magnitude bins |
-| `lambda_contrast` | 1.0 | Contrastive loss weight |
+| `lambda_contrast` | 0.5 | Contrastive loss weight (h_player InfoNCE) |
+| `lambda_pooled_contrast` | 0.3 | Pooled uniformity loss weight (z_p) |
 | `lambda_outcome` | 0.5 | Outcome loss weight |
 | `temperature` | 0.05 | InfoNCE temperature |
+| `uniformity_t` | 2.0 | Gaussian-potential uniformity sensitivity |
 | `focal_gamma` | 2.0 | Focal loss focusing parameter |
 | `min_samples_per_player` | 50 | Minimum possessions for embedding |
-| `batch_size` | 64 | Training batch size |
+| `batch_size` | 96 | Training batch size |
 | `learning_rate` | 1e-3 | Adam learning rate |
 
 ---
@@ -435,11 +457,11 @@ The following issues were identified during a full code audit and corrected:
 
 **Fix**: Added actor-only `h_player` extraction and contrastive loss computation to `_validate()`, mirroring the training loop. Validation loss is now computed with the same formula as training loss.
 
-### 2. Device selection standardised to CPU across all phases
+### 2. Device selection standardised across all phases
 
-**Problem**: Training (`trainer.py`) explicitly preferred CPU over MPS (because PyG heterogeneous-graph workloads with many small kernel launches run slower on Apple MPS), but inference (`main.py`) and analysis (`report_builder.py`) still attempted MPS before falling back to CPU. Since inference runs the same GNN encoder with the same workload characteristics, MPS would be equally slow.
+**Problem**: Training (`trainer.py`) explicitly preferred CPU over MPS (because PyG heterogeneous-graph workloads with many small kernel launches run slower on Apple MPS), but inference (`main.py`) and analysis (`report_builder.py`) still attempted MPS before falling back to CPU. Since inference runs the same GNN encoder with the same workload characteristics, MPS would be equally slow, and the overall device-selection logic was inconsistent across phases.
 
-**Fix**: Removed MPS preference from `run_inference()` in `main.py` and from `ReportBuilder.run()` in `report_builder.py`. All phases now use CUDA if available, otherwise CPU.
+**Fix**: Removed MPS preference from `run_inference()` in `main.py` and from `ReportBuilder.run()` in `report_builder.py`, and standardised device selection so that all phases now use **CUDA if available, otherwise CPU**.
 
 ### 3. Removed dead `event_player_ids` from dataset collate
 
@@ -489,6 +511,43 @@ The following issues were identified during a full code audit and corrected:
 
 **Note**: This is an architectural change — existing checkpoints are incompatible and the full pipeline (Phase 2 → Phase 5) must be re-run.
 
+### 10. Decoupled position from z_p via separate FiLM channel
+
+**Problem**: Position is masked from event features (fix #8) so it only enters through the player node → `h_player` → `z_p` → FiLM path. This forces `z_p` to spend most of its 64 dimensions encoding positional role ("I'm a Right Centre Back") with only residual capacity for individual playing style. As a result, nearest-neighbour cosine similarities within the same position were extremely high (0.998–0.9997) and predicted action distributions across neighbours differed by only a few percentage points.
+
+**Fix**: Added a **separate position embedding** to the FiLM conditioning layer. The FiLM scale/shift parameters are now computed from `[z_p ; pos_embed(position_idx)]` (80-D = 64 + 16) instead of `z_p` alone (64-D). The model can learn "CBs clear the ball" from the position embedding, freeing `z_p` to capture "but *this* CB prefers long diagonal switches."
+
+**Changes**:
+- `PlayerSimilarityModel.__init__`: added `self.film_pos_embed = nn.Embedding(n_positions, d_pos)`. `film_gamma` and `film_beta` now take `d + d_pos` input.
+- `film_condition`: accepts optional `pos_idx` tensor; concatenates `[z_p, pos_embed(pos_idx)]` before computing gamma/beta.
+- `forward`: extracts per-event position index from `(player, acts_in, event)` edges and passes it to `film_condition`.
+- `situation_comparison.py`: `compare()` now passes each player's position index when calling `film_condition`.
+
+### 11. Hard-negative contrastive loss (same-position-group negatives)
+
+**Problem**: The original InfoNCE loss treated all different-player embeddings in a batch as negatives. With 64 possessions per batch, many negatives came from completely different positions (e.g. goalkeeper vs. forward) — "easy" negatives that the model satisfied by merely encoding positional role. This reduced the loss's ability to push apart players who share the same tactical role.
+
+**Fix**: The contrastive loss now restricts negatives to players **in the same coarse position group** (Goalkeeper / Defender / Midfielder / Forward / Unknown). This forces the model to learn fine-grained individual differences within each role. When an anchor has no valid same-group negatives in a batch, the loss falls back to all-player negatives for that row.
+
+**Changes**:
+- `config.py`: added `POSITION_IDX_TO_GROUP` (list mapping each position index to a group 0–4) and `NUM_POSITION_GROUPS`.
+- `ContrastiveLoss.forward`: accepts optional `position_groups` tensor; builds a same-group negative mask instead of an all-player mask.
+- `CombinedLoss.forward`: forwards the new `contrastive_position_groups` argument.
+- `PlayerSimilarityModel.forward`: computes and returns `pooled_z_p_pos_groups` for each unique pooled player.
+- `Trainer._train_epoch` / `_validate`: pass pooled `z_p`, player IDs, and position groups from model outputs to the loss.
+
+**Note**: This is an architectural change — existing checkpoints are incompatible and the model must be retrained (Phase 5). Phases 1–3 processed data remain compatible.
+
+### 12. Contrastive on h_player (not pooled z_p) and pooled uniformity loss
+
+**Problem (contrastive):** The trainer was updated to pass **pooled `z_p`** to the contrastive loss. With pooling, each player appears at most once per batch, so there are no positive pairs (same player, different rows). The contrastive loss therefore always returned 0 and had no effect.
+
+**Fix (contrastive):** Reverted to using **pre-pooling `h_player`** (and `player_node_pids`, per-node position groups) for the contrastive loss. The same player can appear in multiple possessions in a batch, providing valid positive pairs. Position groups for hard negatives are derived per-node from `data["player"].x[:, 0]`.
+
+**Addition (pooled uniformity):** To directly widen cosine similarity gaps in the space used for search, a **Gaussian-potential uniformity loss** was added on **pooled `z_p`** (all pairs in the batch pushed apart on the unit hypersphere). Weight `lambda_pooled_contrast = 0.3`. Contrastive weight reduced to `lambda_contrast = 0.5` (configurable). Validation uses the full loss including both terms.
+
+**Dual-channel position:** Position continues to enter `z_p` through the player-node path (PlayerProjection → GNN → h_player → pool). The separate FiLM position embedding (audit #10) is retained. This keeps coarse role structure (e.g. GK separate) while the uniformity loss prevents embedding collapse.
+
 ---
 
 ## File Structure
@@ -526,6 +585,7 @@ GNN_StatsBomb/
 │   ├── README.md                    # Docs index
 │   ├── PHASE1.md … PHASE7.md       # One file per phase
 │   ├── DATA_QUALITY.md              # Data quality notes
+│   ├── FUTURE_IMPROVEMENTS.md        # SOTA assessment and improvement roadmap
 │   └── PLAYER_SIMILARITY_FINAL_PLAN.md  # Original design plan
 ├── processed_data/                  # Phase 1–3 outputs
 ├── checkpoints/                     # Trained model weights

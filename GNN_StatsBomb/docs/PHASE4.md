@@ -40,11 +40,14 @@ Within a batch (and at inference across all possessions for a player):
 
 Trained end-to-end so that high-leverage possessions can be up-weighted.
 
-### 4. FiLM conditioning (player → action prediction)
+### 4. FiLM conditioning (player + position → action prediction)
 
-- γ = Linear(z_p), β = Linear(z_p).
+- **Dual-channel position design**: position enters `z_p` through the player-node path (PlayerProjection → GNN → h_player → pool), retaining coarse role structure. It also enters FiLM through a dedicated embedding for within-role prediction.
+- FiLM position embedding: `pos_emb = Embedding(position_idx) ∈ R^{16}`.
+- Conditioning vector: `cond = [z_p ; pos_emb]` (64 + 16 = 80-D).
+- γ = Linear(cond), β = Linear(cond).
 - h_conditioned = (1 + γ) ⊙ h_event + β.
-- Action heads (type, angle bin, length bin) take **h_conditioned** so that predictions depend multiplicatively on z_p.
+- Action heads (type, angle bin, length bin) take **h_conditioned** so that predictions depend multiplicatively on both `z_p` and the actor’s positional role.
 
 ### 5. Prediction heads
 

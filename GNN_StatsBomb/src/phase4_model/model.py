@@ -26,10 +26,13 @@ from torch_geometric.data import HeteroData
 from torch_geometric.utils import scatter
 from typing import Dict, List, Optional, Tuple
 
-from ..config import ModelConfig
+from ..config import ModelConfig, POSITION_IDX_TO_GROUP
 from .projections import EventProjection, PlayerProjection
 from .gnn_encoder import PossessionGNNEncoder
 from .pooling import AttentionPooling
+
+# Pre-built tensor for mapping position index → group index (on any device).
+_POS_TO_GROUP_T = torch.tensor(POSITION_IDX_TO_GROUP, dtype=torch.long)
 
 
 class PlayerSimilarityModel(nn.Module):
@@ -38,19 +41,26 @@ class PlayerSimilarityModel(nn.Module):
         super().__init__()
         self.config = config
         d = config.latent_dim
+        d_pos = config.position_embed_dim
 
         self.event_proj = EventProjection(config)
         self.player_proj = PlayerProjection(config)
         self.gnn = PossessionGNNEncoder(config)
         self.pooling = AttentionPooling(d)
 
-        # FiLM conditioning: z_p modulates h_event via scale (gamma) and
-        # shift (beta).  This forces the prediction to be multiplicatively
-        # dependent on z_p — identical z_p ⇒ identical predictions.
-        self.film_gamma = nn.Linear(d, d)
-        self.film_beta = nn.Linear(d, d)
+        # Separate position embedding for FiLM conditioning.  Position
+        # enters z_p through the player-node path (PlayerProjection) AND
+        # through this dedicated FiLM channel — dual-channel design.
+        # z_p retains coarse role structure (e.g. GK far from outfield)
+        # while the FiLM channel sharpens within-role prediction.
+        self.film_pos_embed = nn.Embedding(config.n_positions, d_pos)
 
-        # Action prediction heads now take FiLM-conditioned h_event (dim d)
+        # FiLM conditioning: [z_p ; pos_emb] → scale (gamma) and shift (beta).
+        film_input_dim = d + d_pos
+        self.film_gamma = nn.Linear(film_input_dim, d)
+        self.film_beta = nn.Linear(film_input_dim, d)
+
+        # Action prediction heads take FiLM-conditioned h_event (dim d)
         self.action_type_head = nn.Linear(d, config.n_action_types)
         self.angle_bin_head = nn.Linear(d, config.n_angle_bins)
         self.length_bin_head = nn.Linear(d, config.n_length_bins)
@@ -66,14 +76,29 @@ class PlayerSimilarityModel(nn.Module):
         self,
         h_event: torch.Tensor,
         z_p: torch.Tensor,
+        pos_idx: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Apply FiLM conditioning: (1 + gamma) * h_event + beta.
+
+        When *pos_idx* is provided the FiLM parameters are computed from
+        ``[z_p ; pos_embed(pos_idx)]`` so that positional role information
+        flows through a dedicated channel rather than through ``z_p``.
 
         The ``1 +`` centres the scale factor at identity so that event
         information flows from the first training step (gamma ≈ 0 at init).
         """
-        gamma = self.film_gamma(z_p)
-        beta = self.film_beta(z_p)
+        if pos_idx is not None:
+            pos_emb = self.film_pos_embed(pos_idx)          # (*, d_pos)
+            cond = torch.cat([z_p, pos_emb], dim=-1)        # (*, d + d_pos)
+        else:
+            # Fallback: pad with zeros (e.g. legacy checkpoint without pos)
+            pad = torch.zeros(
+                *z_p.shape[:-1], self.film_pos_embed.embedding_dim,
+                device=z_p.device, dtype=z_p.dtype,
+            )
+            cond = torch.cat([z_p, pad], dim=-1)
+        gamma = self.film_gamma(cond)
+        beta = self.film_beta(cond)
         return (1 + gamma) * h_event + beta
 
     def forward(
@@ -82,14 +107,15 @@ class PlayerSimilarityModel(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         """
         Returns dict with:
-          "h_event"           : (E, d)
-          "h_player"          : (P, d)
-          "action_type"       : (E, n_action_types)
-          "angle_bin"         : (E, n_angle_bins)
-          "length_bin"        : (E, n_length_bins)
-          "outcome"           : (E, 2)
-          "pooled_z_p"        : (n_unique_players, d) — for contrastive loss
-          "pooled_z_p_pids"   : (n_unique_players,)   — player IDs
+          "h_event"                : (E, d)
+          "h_player"               : (P, d)
+          "action_type"            : (E, n_action_types)
+          "angle_bin"              : (E, n_angle_bins)
+          "length_bin"             : (E, n_length_bins)
+          "outcome"                : (E, 2)
+          "pooled_z_p"             : (n_unique_players, d) — for contrastive loss
+          "pooled_z_p_pids"        : (n_unique_players,)   — player IDs
+          "pooled_z_p_pos_groups"  : (n_unique_players,)   — position group IDs
         """
         x_event = self.event_proj(data["event"].x)
         x_player = self.player_proj(data["player"].x)
@@ -108,12 +134,21 @@ class PlayerSimilarityModel(nn.Module):
             data, h_player
         )
 
-        h_conditioned = self.film_condition(h_event, z_p)
+        # Per-event position index from the acting player node.
+        event_pos_idx = self._get_event_position_indices(data)
+
+        h_conditioned = self.film_condition(h_event, z_p, pos_idx=event_pos_idx)
         action_type_logits = self.action_type_head(h_conditioned)
         angle_bin_logits = self.angle_bin_head(h_conditioned)
         length_bin_logits = self.length_bin_head(h_conditioned)
 
         outcome_logits = self.outcome_head(h_event)
+
+        # Position group for each unique pooled player (for hard-neg contrastive loss).
+        pos_group_map = _POS_TO_GROUP_T.to(unique_pids.device)
+        unique_pos_groups = self._get_pooled_position_groups(
+            data, unique_pids, pos_group_map,
+        )
 
         return {
             "h_event": h_event,
@@ -124,6 +159,7 @@ class PlayerSimilarityModel(nn.Module):
             "outcome": outcome_logits,
             "pooled_z_p": unique_pooled,
             "pooled_z_p_pids": unique_pids,
+            "pooled_z_p_pos_groups": unique_pos_groups,
         }
 
     # ------------------------------------------------------------------
@@ -208,6 +244,63 @@ class PlayerSimilarityModel(nn.Module):
         z_p[dst] = pooled[dedup_group]
 
         return z_p, pooled, unique_pids_tensor
+
+    # ------------------------------------------------------------------
+
+    def _get_event_position_indices(
+        self,
+        data: HeteroData,
+    ) -> torch.Tensor:
+        """Return position index for the actor of each event node.
+
+        Uses the ``(player, acts_in, event)`` edges to map each event back
+        to its acting player node, then reads ``player.x[:, 0]`` (the
+        position index stored by Phase 3).
+
+        Falls back to 0 (first position) for events without an actor edge.
+        """
+        E = data["event"].x.shape[0]
+        device = data["event"].x.device
+        pos_idx = torch.zeros(E, dtype=torch.long, device=device)
+
+        edge_key = ("player", "acts_in", "event")
+        if edge_key not in data.edge_types:
+            return pos_idx
+
+        src, dst = data[edge_key].edge_index
+        player_pos = data["player"].x[:, 0].long().clamp(
+            0, self.film_pos_embed.num_embeddings - 1,
+        )
+        pos_idx[dst] = player_pos[src]
+        return pos_idx
+
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _get_pooled_position_groups(
+        data: HeteroData,
+        unique_pids: torch.Tensor,
+        pos_group_map: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return position-group index for each unique pooled player.
+
+        Looks up each player's position index from the player node features
+        and maps it to a coarse group (GK/Def/Mid/Fwd/Unknown).
+        """
+        if unique_pids.numel() == 0:
+            return torch.zeros(0, dtype=torch.long, device=unique_pids.device)
+
+        n_pos = pos_group_map.shape[0]
+        pids_all = data["player"].player_node_pids
+        pos_all = data["player"].x[:, 0].long().clamp(0, n_pos - 1)
+
+        groups = torch.full_like(unique_pids, 4)  # default = Unknown
+        for i, pid in enumerate(unique_pids):
+            mask = pids_all == pid
+            if mask.any():
+                first_pos = pos_all[mask][0]
+                groups[i] = pos_group_map[first_pos]
+        return groups
 
     # ------------------------------------------------------------------
 

@@ -2,7 +2,7 @@
 
 This document is the **final, detailed plan** for building a system that finds players who would **act similarly in the same situation**, using **StatsBomb events + StatsBomb 360** as the primary data source. It is intended to be precise enough to implement.
 
-> **Note**: This plan predates several implementation-time design changes documented in [SYSTEM_DESIGN.md](../SYSTEM_DESIGN.md). Key differences: the system now has **7 phases** (Phase 7 = situation-level analysis); position (32–57) is **masked** from event features; the contrastive loss is purely **player-ID-based** (not "state-aware"); and FiLM uses `(1 + γ) ⊙ h + β`. See SYSTEM_DESIGN.md for the current, authoritative design.
+> **Note**: This plan predates several implementation-time design changes documented in [SYSTEM_DESIGN.md](../SYSTEM_DESIGN.md). Key differences: the system now has **7 phases** (Phase 7 = situation-level analysis); position (32–57) is **masked** from event features; the contrastive loss is **player-ID-based with same-position-group hard negatives** (not "state-aware"); FiLM uses **dual-channel position** (`(1 + γ) ⊙ h + β` with `cond = [z_p ; pos_emb]`); and training includes **pooled uniformity loss** on `z_p` to widen cosine similarity gaps. See SYSTEM_DESIGN.md for the current, authoritative design.
 
 The system has six main phases (now seven — see note above):
 

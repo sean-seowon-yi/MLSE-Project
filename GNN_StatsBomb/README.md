@@ -91,7 +91,7 @@ Core components:
 - `AttentionPooling`: attention‑weighted pooling over per‑possession `h_player` embeddings to form per‑player trait embeddings.
 - `PlayerSimilarityModel`:
   - Projects node features → runs GNN → pools actor embeddings per player → obtains `z_p`.  
-  - Uses **FiLM conditioning** (`gamma(z_p), beta(z_p)`) to modulate `h_event` for action prediction.  
+  - Uses **FiLM conditioning** with a **dual-channel position design**: position enters `z_p` via the player-node path (retaining coarse role structure) AND via a dedicated FiLM embedding (`pos_emb = Embedding(position_idx)`, `cond = [z_p ; pos_emb]`) for within-role prediction sharpening.  
   - Heads:
     - Action: type (14 classes), angle bin (9), length bin (5) from FiLM‑conditioned `h_event`.  
     - Outcome: shot/goal head from `h_event` only.
@@ -108,10 +108,11 @@ Core components:
 - `CombinedLoss`:
   - `L_action` — Focal loss (γ=2.0) with class weights for type & length bins.  
   - `L_outcome` — BCE for possession shot/goal flags (weight λ_outcome=0.5).  
-  - `L_contrastive` — InfoNCE on actor‑only `h_player` embeddings (same `player_id` positives, others negatives; temperature τ=0.05; weight λ_contrast=1.0).
+  - `L_contrastive` — InfoNCE on actor‑only `h_player` embeddings with **same-position-group hard negatives** (positives = same `player_id`, negatives = different `player_id`s in the same coarse position group; temperature τ=0.05; weight λ_contrast=0.5).
+  - `L_pooled_uniformity` — Gaussian‑potential uniformity loss on **pooled `z_p`** to spread embeddings on the unit hypersphere and widen cosine similarity gaps (weight λ_pooled=0.3).
 - `Trainer`:
   - Adam + ReduceLROnPlateau (on full validation loss), gradient clipping, early stopping.  
-  - Logs per‑epoch breakdown: total, action, outcome, contrastive, LR.
+  - Logs per‑epoch breakdown: total, action, outcome, contrastive, uniform, LR.
 
 The masked imitation objective forces the model to answer:
 
@@ -230,6 +231,7 @@ python main.py --mode full_pipeline
 
 - **Other docs**:
   - [docs/DATA_QUALITY.md](docs/DATA_QUALITY.md) — Edge cases, clamping, missing 360, role labels.
+  - [docs/FUTURE_IMPROVEMENTS.md](docs/FUTURE_IMPROVEMENTS.md) — SOTA assessment and improvement roadmap.
   - [docs/PLAYER_SIMILARITY_FINAL_PLAN.md](docs/PLAYER_SIMILARITY_FINAL_PLAN.md) — High-level plan and design notes.
 
 These documents are kept consistent with the current implementation and are the best reference when extending or reviewing the system.

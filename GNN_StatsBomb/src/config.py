@@ -6,7 +6,7 @@ Vocabularies are derived from a 20-match survey of the StatsBomb open data.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 import os
 
 
@@ -169,6 +169,17 @@ POSITION_GROUPS = {
     ],
 }
 
+# Map each position index to a coarse group index (for hard-negative contrastive loss).
+# Groups: 0=Goalkeeper, 1=Defender, 2=Midfielder, 3=Forward, 4=Unknown
+_POS_NAME_TO_GROUP_IDX: Dict[str, int] = {}
+for _grp_name, _grp_idx in [("Goalkeeper", 0), ("Defender", 1), ("Midfielder", 2), ("Forward", 3)]:
+    for _pos in POSITION_GROUPS[_grp_name]:
+        _POS_NAME_TO_GROUP_IDX[_pos] = _grp_idx
+POSITION_IDX_TO_GROUP: List[int] = [
+    _POS_NAME_TO_GROUP_IDX.get(p, 4) for p in POSITIONS
+]
+NUM_POSITION_GROUPS: int = 5  # GK, Def, Mid, Fwd, Unknown
+
 # StatsBomb pitch dimensions (standardised)
 PITCH_LENGTH = 120.0
 PITCH_WIDTH = 80.0
@@ -265,13 +276,14 @@ class ModelConfig:
 class TrainingConfig:
     """Phase 5: training parameters."""
 
-    batch_size: int = 64
-    num_epochs: int = 10
+    batch_size: int = 96
+    num_epochs: int = 200
     learning_rate: float = 1e-3
     weight_decay: float = 1e-5
 
     lambda_outcome: float = 0.5
-    lambda_contrast: float = 1.0
+    lambda_contrast: float = 0.5
+    lambda_pooled_contrast: float = 0.3
 
     patience: int = 15
     min_delta: float = 1e-4

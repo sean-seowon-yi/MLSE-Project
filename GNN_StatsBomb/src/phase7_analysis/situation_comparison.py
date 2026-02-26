@@ -19,10 +19,12 @@ import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
-from ..config import Config, EVENT_TYPES, PITCH_LENGTH, PITCH_WIDTH
+from ..config import Config, EVENT_TYPES, PITCH_LENGTH, PITCH_WIDTH, POSITIONS
 from ..phase3_graph import PossessionGraphBuilder
 from ..phase3_graph.masking import mask_future_info
 from ..phase4_model import PlayerSimilarityModel
+
+_POS_NAME_TO_IDX: Dict[str, int] = {p: i for i, p in enumerate(POSITIONS)}
 
 _ANGLE_BIN_LABELS = [
     "Forward", "Fwd-Right", "Right", "Back-Right",
@@ -61,6 +63,13 @@ class SituationComparator:
         }
         self._names: Dict[int, str] = {
             int(row["player_id"]): row.get("player_name", "")
+            for _, row in player_info.iterrows()
+        }
+        self._pid_to_pos_idx: Dict[int, int] = {
+            int(row["player_id"]): _POS_NAME_TO_IDX.get(
+                row.get("position_name", "Unknown"),
+                _POS_NAME_TO_IDX.get("Unknown", 0),
+            )
             for _, row in player_info.iterrows()
         }
 
@@ -160,8 +169,12 @@ class SituationComparator:
                 if z_p_np is None:
                     continue
                 z_p = torch.tensor(z_p_np, dtype=torch.float32, device=self.device)
+                pos_idx = torch.tensor(
+                    [self._pid_to_pos_idx.get(pid, 0)],
+                    dtype=torch.long, device=self.device,
+                )
                 h_cond = self.model.film_condition(
-                    h_ev.unsqueeze(0), z_p.unsqueeze(0)
+                    h_ev.unsqueeze(0), z_p.unsqueeze(0), pos_idx=pos_idx,
                 )  # (1, d)
 
                 at = F.softmax(self.model.action_type_head(h_cond).squeeze(0), dim=-1).cpu().numpy()
