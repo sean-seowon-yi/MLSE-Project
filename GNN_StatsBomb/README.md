@@ -195,12 +195,24 @@ python main.py --mode full_pipeline
 
 ## Further reading
 
-- **System design & rationale**: `SYSTEM_DESIGN.md`  
+- **System design & rationale**: [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)  
   - Problem statement, data encoding, graph design, model, losses, masking, assumptions.  
   - Audit trail of fixes and architectural decisions.
-- **Data quality & edge cases**: `docs/DATA_QUALITY.md`  
-  - Handling missing 360 frames, extreme coordinates, role labels, etc.
-- **Phase 1 details**: `docs/PHASE1.md`
+
+- **Documentation index**: [docs/README.md](docs/README.md) — overview and links to all phase docs and other references.
+
+- **Phase docs** (one per pipeline stage):
+  - [docs/PHASE1.md](docs/PHASE1.md) — Data preparation & 122-D encoding
+  - [docs/PHASE2.md](docs/PHASE2.md) — Possession construction
+  - [docs/PHASE3.md](docs/PHASE3.md) — Heterogeneous graph construction
+  - [docs/PHASE4.md](docs/PHASE4.md) — Model architecture
+  - [docs/PHASE5.md](docs/PHASE5.md) — Training
+  - [docs/PHASE6.md](docs/PHASE6.md) — Inference & similarity search
+  - [docs/PHASE7.md](docs/PHASE7.md) — Situation-level analysis
+
+- **Other docs**:
+  - [docs/DATA_QUALITY.md](docs/DATA_QUALITY.md) — Edge cases, clamping, missing 360, role labels.
+  - [docs/PLAYER_SIMILARITY_FINAL_PLAN.md](docs/PLAYER_SIMILARITY_FINAL_PLAN.md) — High-level plan and design notes.
 
 These documents are kept consistent with the current implementation and are the best reference when extending or reviewing the system.
 
