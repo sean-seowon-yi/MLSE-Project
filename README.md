@@ -17,6 +17,31 @@ Both pipelines ultimately produce:
 
 ---
 
+## Documentation (links)
+
+| Document | Description |
+|----------|-------------|
+| [docs/data.md](docs/data.md) | SkillCorner & StatsBomb data overview (shared). |
+| **GNN_SkillCorner** | |
+| [GNN_SkillCorner/README.md](GNN_SkillCorner/README.md) | SkillCorner pipeline overview and quick start. |
+| [GNN_SkillCorner/docs/PIPELINE_DETAILS.md](GNN_SkillCorner/docs/PIPELINE_DETAILS.md) | Phase-by-phase pipeline details (tracking → graphs → train → embeddings). |
+| **GNN_StatsBomb** | |
+| [GNN_StatsBomb/README.md](GNN_StatsBomb/README.md) | StatsBomb 360 pipeline overview, CLI summary, and quick start. |
+| [GNN_StatsBomb/SYSTEM_DESIGN.md](GNN_StatsBomb/SYSTEM_DESIGN.md) | Full system design, rationale, losses, masking, config, audit trail. |
+| [GNN_StatsBomb/docs/README.md](GNN_StatsBomb/docs/README.md) | Documentation index and links to all phase docs. |
+| [GNN_StatsBomb/docs/PHASE1.md](GNN_StatsBomb/docs/PHASE1.md) | Data preparation & 126-D feature encoding. |
+| [GNN_StatsBomb/docs/PHASE2.md](GNN_StatsBomb/docs/PHASE2.md) | Possession construction. |
+| [GNN_StatsBomb/docs/PHASE3.md](GNN_StatsBomb/docs/PHASE3.md) | Heterogeneous graph construction. |
+| [GNN_StatsBomb/docs/PHASE4.md](GNN_StatsBomb/docs/PHASE4.md) | Model architecture (GNN, FiLM, pooling, heads). |
+| [GNN_StatsBomb/docs/PHASE5.md](GNN_StatsBomb/docs/PHASE5.md) | Training (losses, masking, evaluation). |
+| [GNN_StatsBomb/docs/PHASE6.md](GNN_StatsBomb/docs/PHASE6.md) | Inference & similarity search. |
+| [GNN_StatsBomb/docs/PHASE7.md](GNN_StatsBomb/docs/PHASE7.md) | Situation-level analysis. |
+| [GNN_StatsBomb/docs/DATA_QUALITY.md](GNN_StatsBomb/docs/DATA_QUALITY.md) | Data quality, edge cases, clamping, missing 360. |
+| [GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md](GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md) | SOTA assessment and improvement roadmap. |
+| [GNN_StatsBomb/docs/PLAYER_SIMILARITY_FINAL_PLAN.md](GNN_StatsBomb/docs/PLAYER_SIMILARITY_FINAL_PLAN.md) | Original high-level plan and design notes. |
+
+---
+
 ## Repository structure
 
 Only configuration, core code, and design docs are tracked. Raw data, intermediate artifacts, and heavy reports are kept local and ignored via `.gitignore`.
