@@ -297,6 +297,7 @@ This serves a complementary role to the action loss:
 - Batch size: 64 possession graphs
 - Data split: 70/15/15 by match_id (prevents leakage — all possessions from a given match go to the same split, so the model cannot memorise match-specific patterns and leak them across train/val/test)
 - Early stopping: patience=15, min_delta=1e-4
+- **Test-set evaluation** (`--mode evaluate`): After training, the best checkpoint can be evaluated on the held-out test set (same split, seed=42). Metrics: action type / angle bin / length bin accuracy and macro F1, plus outcome accuracy, BCE, and AUC-ROC for ends_in_shot and ends_in_goal. Outputs: `checkpoints/evaluation/test_metrics.json` and confusion-matrix and ROC plots. See `docs/PHASE5.md` and `src/phase5_training/evaluator.py`.
 
 ---
 

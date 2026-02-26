@@ -9,15 +9,14 @@ Saves metrics to JSON and visualizations (confusion matrices, ROC curves) to dis
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from torch_geometric.data import Batch
 from tqdm import tqdm
 
-from ..config import EVENT_TYPES, ModelConfig, TrainingConfig
+from ..config import EVENT_TYPES, ModelConfig
 from ..phase4_model.model import PlayerSimilarityModel
 from .dataset import PossessionGraphDataset, collate_fn, train_val_test_split
 

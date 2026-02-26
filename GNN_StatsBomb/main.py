@@ -230,6 +230,7 @@ def train_model(config: Config) -> None:
         train_ratio=config.training.train_ratio,
         val_ratio=config.training.val_ratio,
         test_ratio=config.training.test_ratio,
+        seed=42,
     )
     print(f"Train: {len(train_g):,}  Val: {len(val_g):,}  Test: {len(test_g):,}")
 
@@ -290,6 +291,7 @@ def run_evaluate(config: Config) -> None:
         train_ratio=config.training.train_ratio,
         val_ratio=config.training.val_ratio,
         test_ratio=config.training.test_ratio,
+        seed=42,
     )
     print(f"Test graphs: {len(test_g):,}")
 
