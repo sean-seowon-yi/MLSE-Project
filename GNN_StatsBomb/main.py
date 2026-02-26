@@ -7,6 +7,7 @@ Modes
   build_possessions  Phase 2 — group events into possession sequences.
   build_graphs       Phase 3 — build per-possession heterogeneous graphs.
   train              Phase 5 — train the GNN model (creates Phase 4 model).
+  evaluate           Evaluate best model on test set (metrics + plots).
   inference          Phase 6 — generate player embeddings from trained model.
   search             Phase 6 — find similar players to a query.
   full_pipeline      Run Phases 1→6A end-to-end (no search).
@@ -18,6 +19,7 @@ Usage
   python main.py --mode build_possessions
   python main.py --mode build_graphs
   python main.py --mode train
+  python main.py --mode evaluate
   python main.py --mode inference
   python main.py --mode search --player_id 5503
   python main.py --mode full_pipeline
@@ -253,6 +255,81 @@ def train_model(config: Config) -> None:
     print("\nTraining complete.")
 
 
+# ── Test-set evaluation ───────────────────────────────────────────────────
+
+def run_evaluate(config: Config) -> None:
+    """
+    Evaluate the trained model on the held-out test set.
+
+    Loads the same train/val/test split as training, runs the best checkpoint
+    on the test set, and reports accuracy, macro F1, and outcome metrics.
+    Saves test_metrics.json and visualizations (confusion matrices, ROC) to
+    checkpoints/evaluation/.
+    """
+    import torch
+    from torch.utils.data import DataLoader
+    from src.phase3_graph import PossessionGraphBuilder
+    from src.phase4_model import PlayerSimilarityModel
+    from src.phase5_training import (
+        PossessionGraphDataset,
+        collate_fn,
+        train_val_test_split,
+    )
+    from src.phase5_training.evaluator import evaluate
+
+    print("\n" + "=" * 60)
+    print("TEST-SET EVALUATION")
+    print("=" * 60)
+
+    out_dir = Path(config.data.output_dir)
+    features = np.load(out_dir / "event_features.npy")
+    graphs = PossessionGraphBuilder.load(str(out_dir / "possession_graphs.pkl"))
+
+    train_g, val_g, test_g = train_val_test_split(
+        graphs,
+        train_ratio=config.training.train_ratio,
+        val_ratio=config.training.val_ratio,
+        test_ratio=config.training.test_ratio,
+    )
+    print(f"Test graphs: {len(test_g):,}")
+
+    test_ds = PossessionGraphDataset(test_g, features, config.model)
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=config.training.batch_size,
+        shuffle=False,
+        collate_fn=collate_fn,
+        num_workers=0,
+    )
+
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    model = PlayerSimilarityModel(config.model)
+    ckpt_path = Path(config.training.checkpoint_dir) / "best_model.pt"
+    if not ckpt_path.exists():
+        print(f"Checkpoint not found: {ckpt_path}")
+        print("Run --mode train first.")
+        return
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    model.load_state_dict(ckpt["model_state_dict"])
+    model = model.to(device)
+
+    eval_dir = Path(config.training.checkpoint_dir) / "evaluation"
+    metrics = evaluate(model, test_loader, device, eval_dir, save_plots=True)
+
+    print("\n--- Test set metrics ---")
+    print(f"  Action type  — accuracy: {metrics['action_type']['accuracy']:.4f}  macro F1: {metrics['action_type']['macro_f1']:.4f}")
+    print(f"  Angle bin    — accuracy: {metrics['angle_bin']['accuracy']:.4f}  macro F1: {metrics['angle_bin']['macro_f1']:.4f}")
+    print(f"  Length bin   — accuracy: {metrics['length_bin']['accuracy']:.4f}  macro F1: {metrics['length_bin']['macro_f1']:.4f}")
+    print("  Outcome:")
+    print(f"    ends_in_shot — accuracy: {metrics['outcome']['ends_in_shot']['accuracy']:.4f}  BCE: {metrics['outcome']['ends_in_shot']['bce']:.4f}  AUC: {metrics['outcome']['ends_in_shot']['auc_roc']:.4f}")
+    print(f"    ends_in_goal — accuracy: {metrics['outcome']['ends_in_goal']['accuracy']:.4f}  BCE: {metrics['outcome']['ends_in_goal']['bce']:.4f}  AUC: {metrics['outcome']['ends_in_goal']['auc_roc']:.4f}")
+    print(f"\nMetrics and plots saved to: {eval_dir}")
+
+
 # ── Phase 6: Inference ───────────────────────────────────────────────────
 
 def run_inference(config: Config, max_graphs: int | None = None) -> None:
@@ -388,7 +465,7 @@ def main():
         "--mode", type=str, default="prepare",
         choices=[
             "prepare", "build_possessions", "build_graphs",
-            "train", "inference", "search", "full_pipeline", "analyze",
+            "train", "evaluate", "inference", "search", "full_pipeline", "analyze",
         ],
         help="Pipeline phase to run.",
     )
@@ -431,6 +508,8 @@ def main():
         build_graphs(config)
     elif args.mode == "train":
         train_model(config)
+    elif args.mode == "evaluate":
+        run_evaluate(config)
     elif args.mode == "inference":
         run_inference(config, max_graphs=args.max_graphs)
     elif args.mode == "full_pipeline":

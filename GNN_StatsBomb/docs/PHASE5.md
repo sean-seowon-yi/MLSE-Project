@@ -59,7 +59,8 @@ Validation loss uses the **same** formula (including contrastive) so early stopp
 | Losses (Focal, contrastive, combined) | `src/phase5_training/losses.py` |
 | Dataset (masking, targets) | `src/phase5_training/dataset.py` |
 | Action targets (bins) | `src/phase5_training/action_targets.py` |
-| CLI entry | `main.py` → `--mode train` |
+| Test-set evaluation | `src/phase5_training/evaluator.py` |
+| CLI entry | `main.py` → `--mode train`, `--mode evaluate` |
 
 ---
 
@@ -71,6 +72,27 @@ python main.py --mode train
 ```
 
 Requires Phase 1–3 outputs (especially `possession_graphs.pkl`). Checkpoints go to `checkpoints/`.
+
+---
+
+## Test-set evaluation (`--mode evaluate`)
+
+After training, run evaluation on the **held-out test set** (same split as training):
+
+```bash
+python main.py --mode evaluate
+```
+
+This loads `checkpoints/best_model.pt`, runs the model on the test graphs, and computes:
+
+| Output | Metrics | Visualization |
+|--------|--------|----------------|
+| Action type | Accuracy, macro F1 | Confusion matrix (14×14) |
+| Angle bin | Accuracy, macro F1 | Confusion matrix (9×9) |
+| Length bin | Accuracy, macro F1 | Confusion matrix (5×5) |
+| Outcome (shot/goal) | Accuracy, BCE, AUC-ROC | ROC curves |
+
+Results are saved to `checkpoints/evaluation/`: `test_metrics.json` and the PNG plots. This gives a direct comparison of predicted vs actual actions on unseen matches. The checkpoint must match the current model (126-D features, time-delta edges); re-run `--mode train` if you have an older checkpoint.
 
 ---
 

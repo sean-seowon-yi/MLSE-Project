@@ -119,6 +119,21 @@ The masked imitation objective forces the model to answer:
 
 Similar `z_p` vectors then imply similar action distributions across situations.
 
+### Test-set evaluation (`mode=evaluate`)
+
+After training, you can evaluate the **best checkpoint** on the held-out **test set** (same 70/15/15 split by match_id):
+
+- **Action heads**: accuracy and macro F1 for action type, angle bin, and length bin; confusion matrices (saved as PNGs).
+- **Outcome head**: accuracy, BCE, and AUC-ROC for `ends_in_shot` and `ends_in_goal`; ROC curves (saved as PNG).
+
+Outputs are written to `checkpoints/evaluation/`: `test_metrics.json` plus `confusion_matrix_*.png` and `outcome_roc.png`. Run with:
+
+```bash
+python main.py --mode evaluate
+```
+
+Requires Phase 1–3 outputs and a trained checkpoint (`checkpoints/best_model.pt`).
+
 ### Phase 6 – Inference & similarity (`mode=inference`, `mode=search`)
 
 **Files:** `src/phase6_inference/*`
@@ -177,6 +192,9 @@ python main.py --mode build_graphs
 
 # Phase 5 (train)
 python main.py --mode train
+
+# Test-set evaluation (optional)
+python main.py --mode evaluate
 
 # Phase 6A (embeddings)
 python main.py --mode inference

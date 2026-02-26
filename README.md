@@ -51,11 +51,13 @@ Project/
 ├── GNN_StatsBomb/            # GNN player similarity (StatsBomb 360 events)
 │   ├── README.md
 │   ├── SYSTEM_DESIGN.md      # Full system design & rationale
-│   ├── main.py               # Multi-phase CLI (Phases 1–7)
+│   ├── main.py               # Multi-phase CLI (Phases 1–7 + evaluate)
 │   ├── requirements.txt
 │   ├── docs/
+│   │   ├── README.md         # Docs index & phase links
+│   │   ├── PHASE1.md … PHASE7.md   # Per-phase documentation
 │   │   ├── DATA_QUALITY.md   # Data quality & edge cases
-│   │   └── PHASE1.md         # Phase 1: data preparation & encoding
+│   │   └── PLAYER_SIMILARITY_FINAL_PLAN.md
 │   ├── src/
 │   │   ├── config.py
 │   │   ├── data_preparation.py
@@ -125,6 +127,10 @@ This will:
 4. **train** — train the GNN with masked imitation + auxiliary objectives  
 5. **inference** — generate global player embeddings `z_p` (one per player)
 
+Optional after training:
+
+- **evaluate** — run the best checkpoint on the held-out test set; reports accuracy, macro F1, and outcome metrics, and saves confusion matrices and ROC curves to `checkpoints/evaluation/`.
+
 Once embeddings exist, you can:
 
 **Search for similar players:**
@@ -148,9 +154,8 @@ Phase 7:
 
 For full design details (data, model, loss functions, masking, graph structure, assumptions), see:
 
-- `GNN_StatsBomb/SYSTEM_DESIGN.md`
-
-which is kept aligned with the current implementation.
+- **`GNN_StatsBomb/SYSTEM_DESIGN.md`** — kept aligned with the current implementation.  
+- **`GNN_StatsBomb/docs/README.md`** — index of per-phase docs (PHASE1–PHASE7) and related references.
 
 ---
 
