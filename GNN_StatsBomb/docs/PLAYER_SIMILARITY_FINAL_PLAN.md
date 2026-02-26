@@ -2,7 +2,9 @@
 
 This document is the **final, detailed plan** for building a system that finds players who would **act similarly in the same situation**, using **StatsBomb events + StatsBomb 360** as the primary data source. It is intended to be precise enough to implement.
 
-The system has six main phases:
+> **Note**: This plan predates several implementation-time design changes documented in [SYSTEM_DESIGN.md](../SYSTEM_DESIGN.md). Key differences: the system now has **7 phases** (Phase 7 = situation-level analysis); position (32–57) is **masked** from event features; the contrastive loss is purely **player-ID-based** (not "state-aware"); and FiLM uses `(1 + γ) ⊙ h + β`. See SYSTEM_DESIGN.md for the current, authoritative design.
+
+The system has six main phases (now seven — see note above):
 
 1. Phase 1 – Event-level encoding (existing).
 2. Phase 2 – Possession construction.
@@ -85,12 +87,12 @@ We use 360 to model **off-ball teammates and opponents** around the ball.
 
 Phase 1 (already implemented) produces:
 
-- `event_features.npy` – `float32` array `(n_events, 122)`:
-  - 122‑D fixed-length representation per event (event type, location, play_pattern, position, scalars, pitch zone, **Spatial_360**, etc.).
+- `event_features.npy` – `float32` array `(n_events, 126)`:
+  - 126‑D fixed-length representation per event (event type, location, play_pattern, position, scalars, pitch zone, **Spatial_360**, period, etc.).
 - `event_metadata.parquet`:
   - Rows align with `event_features`.
   - Columns: `event_id`, `match_id`, `competition_id`, `season_id`, `player_id`, `player_name`, `team_id`, `team_name`, `position_name`, `event_type`, `period`, `minute`, `second`, (plus we will ensure `possession_number`, `possession_team_id` are available for Phase 2).
-- `feature_names.json` – names of the 122 features.
+- `feature_names.json` – names of the 126 features.
 - `data_stats.json` – summary including `feature_dim`, `use_360`, etc.
 
 Phase 1 is **state-only**: it does not learn trait/style yet; it is a feature engineering stage.
@@ -117,7 +119,7 @@ We retain the existing design with three notable choices:
 We refer to `GNN_StatsBomb/docs/PHASE1.md` and `docs/DATA_QUALITY.md` for full details; the key point for later phases is that we can trust:
 
 - **No NaNs / Infs** in `event_features.npy`.
-- A consistent 122‑D layout with known indices for:
+- A consistent 126‑D layout with known indices for:
   - Spatial_360 block.
   - Action/outcome fields (end_location, pass_length, outcomes, etc.).
 
@@ -184,7 +186,7 @@ For each possession:
 
 - One **event node** per event in the possession.
 - Raw feature:
-  - 122‑D vector from Phase 1: `x_raw ∈ R^122`.
+  - 126‑D vector from Phase 1: `x_raw ∈ R^126`.
 - Attributes:
   - `player_id`, `team_id`, `event_type`, `period`, `minute`, `second`.
 - These features will later be:
@@ -268,13 +270,13 @@ Either approach is acceptable; the design above is agnostic as long as the relat
 
 ### 5.4 Spatial_360 and redundancy
 
-Phase 1’s 122‑D event vector includes a **Spatial_360** block (counts, mean positions, min distances). Once we add explicit teammate and opponent nodes:
+Phase 1’s 126‑D event vector includes a **Spatial_360** block (counts, mean positions, min distances) and a **period** one-hot (4‑D). Once we add explicit teammate and opponent nodes:
 
 - If we feed both Spatial_360 and explicit player nodes, the model may rely on the easier **summary stats** and ignore the graph.
 
 We therefore adopt the following policy:
 
-- Keep the full 122‑D vectors on disk as Phase 1’s **canonical state representation**.
+- Keep the full 126‑D vectors on disk as Phase 1’s **canonical state representation**.
 - For the **GNN encoder branch** (Phases 4–5):
   - Apply a `mask_spatial_360()` function to **zero out Spatial_360 dimensions** in event features before projection.
   - Rely on the **graph structure** (player nodes + `E_context` edges) for spatial context (options + pressure).
@@ -293,7 +295,7 @@ We now define how we turn possession graphs into:
 
 ### 6.1 Per-event feature projection (mandatory)
 
-The 122‑D event vectors mix:
+The 126‑D event vectors mix:
 
 - Many **sparse one-hots** (event type, position, outcomes, etc.), and
 - Several **continuous scalars** (normalised coordinates, lengths, xG, etc.).
@@ -303,12 +305,12 @@ Feeding this directly into a GNN is suboptimal. We **must** first project to a w
 Implementation:
 
 1. For each event node:
-   - Start from Phase 1 feature vector `x_raw ∈ R^122`.
+   - Start from Phase 1 feature vector `x_raw ∈ R^126`.
    - Optionally apply:
      - `mask_future_info()` if this node is the imitation target (Phase 5).
      - `mask_spatial_360()` for the GNN branch to drop Spatial_360 dims.
 2. Apply a small MLP with normalisation:
-   - `h_0 = Linear(122 → d) → ReLU → Linear(d → d)`.
+   - `h_0 = Linear(126 → d) → ReLU → Linear(d → d)`.
    - Apply `LayerNorm` (or similar) on the output.
 
 This yields `x_event ∈ R^d` as the GNN input features for event nodes.
@@ -376,7 +378,7 @@ We use three kinds of objectives:
 
 1. **Masked action / imitation loss** \(L_{\text{action}}\) – primary.
 2. **Outcome / value loss** \(L_{\text{outcome}}\) – secondary.
-3. **State-aware contrastive loss** \(L_{\text{contrast}}\) – auxiliary.
+3. **Contrastive loss** \(L_{\text{contrast}}\) – auxiliary (player-ID-based; see SYSTEM_DESIGN.md).
 
 ### 7.1 Masked action / imitation objective (primary)
 
@@ -385,7 +387,7 @@ For an event at time `t` by player `p`:
 1. Build **state** \(s_t\):
    - Start from Phase 1 features + graph context **but**:
      - Apply `mask_future_info()` to **remove any fields that directly reveal the action or its consequences** from the event’s feature vector:
-       - Allowed (examples): current location, play pattern, position, under_pressure / counterpress, team IDs, and graph-based context from teammate/opponent nodes.
+       - Allowed (examples): current location, play pattern, under_pressure / counterpress, pitch zone, period, team IDs, and graph-based context from teammate/opponent nodes. (**Note**: position is now **masked** — it flows through the player node channel instead; see SYSTEM_DESIGN.md.)
        - Forbidden (examples): `end_location`, delta, movement distance/angle, any pass/shot/dribble outcomes, `pass_type`, `pass_height`, `shot_type`, `pass_length`, `shot_xg`, `shot_first_time`, etc.
      - After masking, apply the per-event MLP + LayerNorm to get `x_event_t`.
    - Aggregate neighbourhood information via the GNN to get the final event embedding `h_event_t` (which encodes state `s_t`).
@@ -433,22 +435,18 @@ To ensure embeddings reflect **impact**, not just style:
 
 This encourages the encoder to capture **value-relevant** patterns.
 
-### 7.3 Contrastive objectives (auxiliary, state-aware)
+### 7.3 Contrastive objectives (auxiliary)
 
-We can further regularise the space with state-aware contrastive learning:
+We regularise the embedding space with an **InfoNCE** contrastive loss on per-possession player embeddings `h_player`:
 
-- Positives:
-  - Same player in similar contexts (e.g. same zone + event type).
-- Negatives:
-  - Different players.
-  - Optionally, the same player in drastically different contexts.
+- **Positives**: Two `h_player` embeddings belonging to the **same player** from different possessions within the same batch.
+- **Negatives**: All other `h_player` embeddings in the batch (different players).
 
-Use an InfoNCE/NT‑Xent style loss \(L_{\text{contrast}}\), but:
+The loss is \(L_{\text{contrast}}\) (InfoNCE) and is **auxiliary**, not primary. It mainly:
 
-- It is **auxiliary**, not primary.
-- It mainly:
-  - Smooths the embedding space.
-  - Pulls together truly similar behaviour–state pairs.
+- Ensures same-player embeddings are **consistent** across possessions.
+- Pushes different-player embeddings **apart** in the latent space.
+- Smooths the embedding space for downstream similarity search.
 
 ### 7.4 Combined objective
 
@@ -509,7 +507,7 @@ Interpretation:
 2. **No left/right mirroring** during training so sidedness and footedness are preserved; inference-time mirroring supports cross-sided queries.
 3. **Possessions** are used as the natural unit of play; StatsBomb provides `possession` IDs.
 4. **Event+Player graphs** are used to explicitly model who does what, in what sequence, with which options and pressure.
-5. **Per-event projection** (122‑D → `d`) is mandatory to stabilise GNN training.
+5. **Per-event projection** (126‑D → `d`) is mandatory to stabilise GNN training.
 6. **Masked imitation** is the core loss, ensuring `z_p` captures **how** a player acts, not just where.
 7. **Outcome heads** ensure representations are tied to value/impact.
 8. **Attention pooling** ensures high-leverage actions dominate `z_p`, not routine recycling.

@@ -99,6 +99,13 @@ PASS_HEIGHTS: List[str] = [
     "Low Pass",
 ]
 
+PERIODS: List[str] = [
+    "Period 1",
+    "Period 2",
+    "Extra Time 1",
+    "Extra Time 2",
+]
+
 POSITIONS: List[str] = [
     "Center Attacking Midfield",
     "Center Back",
@@ -238,6 +245,7 @@ class GraphConfig:
 class ModelConfig:
     """Phase 4: GNN encoder hyperparameters."""
 
+    event_feature_dim: int = 126
     latent_dim: int = 64
     hidden_dim: int = 128
     num_heads: int = 4

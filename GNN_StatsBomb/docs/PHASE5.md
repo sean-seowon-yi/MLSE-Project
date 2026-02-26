@@ -22,7 +22,7 @@ The **dataset** (and inference path) zero out parts of the event feature vector 
 - All outcome fields (65–94).
 - Action-specific scalars (95, 98–103): duration, pass length, etc.
 
-**Left unmasked**: location (14–15), play pattern (23–31), under_pressure/counterpress (96–97), pitch zone (104–112). Spatial_360 is already zeroed in the stored graph (Phase 3).
+**Left unmasked**: location (14–15), play pattern (23–31), under_pressure/counterpress (96–97), pitch zone (104–112), period (122–125). Spatial_360 is already zeroed in the stored graph (Phase 3).
 
 ---
 

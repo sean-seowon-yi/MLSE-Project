@@ -8,7 +8,7 @@ This folder contains phase-by-phase documentation for the player similarity pipe
 
 | Phase | Doc | Description |
 |-------|-----|-------------|
-| **1** | [PHASE1.md](PHASE1.md) | Data preparation & 122-D feature encoding |
+| **1** | [PHASE1.md](PHASE1.md) | Data preparation & 126-D feature encoding |
 | **2** | [PHASE2.md](PHASE2.md) | Possession construction (grouping, labels, timestamps) |
 | **3** | [PHASE3.md](PHASE3.md) | Heterogeneous graph construction (event + player nodes, edges) |
 | **4** | [PHASE4.md](PHASE4.md) | Model architecture (GNN, FiLM, pooling, heads) |

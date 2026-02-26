@@ -41,14 +41,23 @@ def plot_pca_global(
     Z: np.ndarray,
     player_info: pd.DataFrame,
     output_dir: Path,
+    pid_to_coord: Dict[int, np.ndarray] = None,
 ) -> None:
-    """2-D PCA scatter of all players, coloured by position group."""
+    """2-D PCA scatter of all players, coloured by position group.
+
+    If *pid_to_coord* is provided (from ``compute_pca_coords``), reuses
+    those coordinates instead of refitting PCA.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     if Z.shape[0] == 0:
         return
 
-    pca = PCA(n_components=2, random_state=0)
-    Z_2d = pca.fit_transform(Z)
+    if pid_to_coord is not None and len(pid_to_coord) == Z.shape[0]:
+        pids = player_info["player_id"].to_numpy()
+        Z_2d = np.stack([pid_to_coord[int(p)] for p in pids], axis=0)
+    else:
+        pca = PCA(n_components=2, random_state=0)
+        Z_2d = pca.fit_transform(Z)
 
     df = pd.DataFrame({
         "x": Z_2d[:, 0],

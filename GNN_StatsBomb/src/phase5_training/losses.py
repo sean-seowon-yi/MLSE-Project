@@ -162,7 +162,7 @@ class CombinedLoss(nn.Module):
     def __init__(
         self,
         lambda_outcome: float = 0.5,
-        lambda_contrast: float = 0.1,
+        lambda_contrast: float = 1.0,
     ):
         super().__init__()
         self.action_loss = ActionPredictionLoss()

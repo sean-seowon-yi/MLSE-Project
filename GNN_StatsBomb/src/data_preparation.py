@@ -237,6 +237,12 @@ class StatsBombDataLoader:
         parsed: List[ParsedEvent] = []
 
         for raw in raw_events:
+            if raw.get("period", 1) == 5:
+                continue  # penalty shootout — not open play
+
+            if not raw.get("player", {}).get("id"):
+                continue  # no identified player — cannot attribute to an actor
+
             etype = raw["type"]["name"]
             if etype not in allowed:
                 continue

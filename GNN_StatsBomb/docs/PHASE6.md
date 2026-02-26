@@ -41,7 +41,7 @@ Processing uses mini-batch inference (`Batch.from_data_list`) for speed.
 |-----------|----------|
 | Embedding generator (batched, pooling) | `src/phase6_inference/embedding_generator.py` |
 | Similarity search (cosine, filters) | `src/phase6_inference/similarity_search.py` |
-| CLI entry | `main.py` → `--mode inference` (and search via API or script) |
+| CLI entry | `main.py` → `--mode inference` (embeddings) / `--mode search --player_id <id>` (similarity) |
 
 ---
 

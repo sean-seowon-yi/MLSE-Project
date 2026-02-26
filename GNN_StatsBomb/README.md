@@ -32,8 +32,8 @@ All phases are orchestrated by `main.py` via a `--mode` CLI.
 2. Filter to a core set of on-ball event types (passes, shots, carries, duels, etc.).  
 3. Require a 360 freeze frame (when `data.use_360=True`):  
    - Only events with 360 context are kept.  
-4. Encode each event into a **122‑D feature vector** including:
-   - Event type, locations, displacements, play pattern, position, body part, outcomes, scalars (duration, pressure, xG, etc.), pitch zone, and a 9‑D 360 summary (counts & distances).
+4. Encode each event into a **126‑D feature vector** including:
+   - Event type, locations, displacements, play pattern, position, body part, outcomes, scalars (duration, pressure, xG, etc.), pitch zone, 9‑D 360 summary (counts & distances), and match period (4‑D one‑hot).
    - Coordinates are normalised to [0,1].  
    - Left and right positions are **not mirrored** (Left Wing vs Right Wing stay distinct).
 5. Save:
@@ -50,7 +50,7 @@ All phases are orchestrated by `main.py` via a `--mode` CLI.
 - Sort within each possession by `(period, minute, second, original_index)`.  
 - For each possession, store:
   - `event_indices`, `player_ids`, `team_ids`, `event_types`, `position_names`.  
-  - Per‑event timestamps in seconds (`minute*60 + second`) for tempo.  
+  - Per‑event timestamps with millisecond precision (parsed from StatsBomb's period‑relative `timestamp` field; falls back to `minute*60 + second`) for tempo.  
   - Labels: `ends_in_shot`, `ends_in_goal`, `total_xg`.  
 - Save a list of `Possession` objects to `processed_data/possessions.pkl`.
 
@@ -61,7 +61,7 @@ All phases are orchestrated by `main.py` via a `--mode` CLI.
 Build a **PyG `HeteroData` graph per possession**:
 
 - **Node types:**
-  - `event`: one node per on-ball event, features = 122‑D vector with the 9‑D Spatial_360 block **zeroed** (`mask_spatial_360`).  
+  - `event`: one node per on-ball event, features = 126‑D vector with the 9‑D Spatial_360 block **zeroed** (`mask_spatial_360`).  
   - `player`: one node per distinct player in the possession (actors + off-ball 360 players), features = `[position_idx, is_possession_team, dx, dy]`, where `dx, dy` are relative to the ball.
 
 - **Edge types:**
@@ -74,7 +74,7 @@ Build a **PyG `HeteroData` graph per possession**:
 - **Masking utilities:**
   - `mask_spatial_360`: zero out indices `[113..121]` so spatial context is learned via graph structure.  
   - `mask_future_info`: zero out any feature that reveals the action or its outcome, **including position one‑hot (32–57)**.  
-    - After masking, only situational state remains: location, play pattern, under_pressure, counterpress, pitch zone.
+    - After masking, only situational state remains: location, play pattern, under_pressure, counterpress, pitch zone, and period.
 
 Graphs, with attached metadata, are saved to `processed_data/possession_graphs.pkl`.
 
@@ -82,7 +82,7 @@ Graphs, with attached metadata, are saved to `processed_data/possession_graphs.p
 
 Core components:
 
-- `EventProjection`: 122‑D → d (64) with `Linear → ReLU → Linear → LayerNorm`.  
+- `EventProjection`: 126‑D → d (64) with `Linear → ReLU → Linear → LayerNorm`.  
 - `PlayerProjection`: position embedding (26→16) + [team_flag, dx, dy] → d with MLP + LayerNorm.  
 - `PossessionGNNEncoder`: 2‑layer **heterogeneous GATv2**:
   - Per‑relation `GATv2Conv` for each edge type.  
@@ -202,7 +202,7 @@ python main.py --mode full_pipeline
 - **Documentation index**: [docs/README.md](docs/README.md) — overview and links to all phase docs and other references.
 
 - **Phase docs** (one per pipeline stage):
-  - [docs/PHASE1.md](docs/PHASE1.md) — Data preparation & 122-D encoding
+  - [docs/PHASE1.md](docs/PHASE1.md) — Data preparation & 126-D encoding
   - [docs/PHASE2.md](docs/PHASE2.md) — Possession construction
   - [docs/PHASE3.md](docs/PHASE3.md) — Heterogeneous graph construction
   - [docs/PHASE4.md](docs/PHASE4.md) — Model architecture

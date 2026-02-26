@@ -259,7 +259,7 @@ class ReportBuilder:
         pid_to_coord = compute_pca_coords(Z, player_info)
 
         print("Generating global PCA plot …")
-        plot_pca_global(Z, player_info, output_dir)
+        plot_pca_global(Z, player_info, output_dir, pid_to_coord=pid_to_coord)
 
         query_pids = self._choose_queries(player_info)
         print(f"Query players ({len(query_pids)}): {query_pids}")

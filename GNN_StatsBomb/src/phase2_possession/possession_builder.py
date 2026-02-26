@@ -22,6 +22,21 @@ from tqdm import tqdm
 from ..config import PossessionConfig, get_config
 
 
+def _parse_timestamp(ts: str) -> float:
+    """Parse StatsBomb timestamp ``"HH:MM:SS.mmm"`` into seconds (float).
+
+    The timestamp is period-relative (resets each half). Since possessions
+    never span periods, only relative deltas within a possession matter.
+    """
+    try:
+        parts = ts.split(":")
+        h, m = int(parts[0]), int(parts[1])
+        s = float(parts[2])
+        return h * 3600.0 + m * 60.0 + s
+    except (ValueError, IndexError, AttributeError):
+        return 0.0
+
+
 @dataclass
 class Possession:
     """A single possession sequence with indices into the global event arrays."""
@@ -35,7 +50,8 @@ class Possession:
     event_types: List[str]
     position_names: List[str]
 
-    # Per-event timestamps (seconds from match start) for time-delta edges
+    # Per-event timestamps (seconds within the period, millisecond precision)
+    # for time-delta edge attributes in Phase 3
     timestamps_sec: List[float] = field(default_factory=list)
 
     # Possession-level labels for outcome heads
@@ -74,7 +90,7 @@ class PossessionBuilder:
             Must contain: match_id, possession_number, possession_team_id,
             player_id, team_id, event_type, position_name, period, minute, second.
         event_features : ndarray, optional
-            (n_events, 122) array — not modified, but its length is used for
+            (n_events, 126) array — not modified, but its length is used for
             sanity-checking alignment with *metadata*.
 
         Returns
@@ -97,7 +113,7 @@ class PossessionBuilder:
             )
 
         metadata = metadata.copy()
-        metadata["_orig_idx"] = metadata.index
+        metadata["_orig_idx"] = np.arange(len(metadata))
 
         grouped = metadata.groupby(
             ["match_id", "possession_number", "possession_team_id"],
@@ -121,10 +137,13 @@ class PossessionBuilder:
             event_types = group["event_type"].tolist()
             position_names = group["position_name"].tolist()
 
-            timestamps_sec = (
-                group["minute"].astype(float) * 60.0
-                + group["second"].astype(float)
-            ).tolist()
+            if "timestamp" in group.columns:
+                timestamps_sec = group["timestamp"].apply(_parse_timestamp).tolist()
+            else:
+                timestamps_sec = (
+                    group["minute"].astype(float) * 60.0
+                    + group["second"].astype(float)
+                ).tolist()
 
             # "Shot" anywhere in the possession — in StatsBomb data, shots
             # almost always terminate the possession (save/block/goal resets
@@ -144,7 +163,7 @@ class PossessionBuilder:
                 xg_vals = group.loc[group["event_type"] == "Shot", "shot_xg"]
                 total_xg = float(xg_vals.sum()) if len(xg_vals) > 0 else 0.0
 
-            match_id, poss_num, poss_team = pos_key
+            match_id, _, poss_team = pos_key
 
             possessions.append(Possession(
                 pos_key=pos_key,

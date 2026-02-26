@@ -30,7 +30,7 @@ Artifacts are written under `embeddings/analysis/` (e.g. `report_<player_id>.txt
 | Report orchestration | `src/phase7_analysis/report_builder.py` |
 | Counterfactual action prediction (FiLM + heads) | `src/phase7_analysis/situation_comparison.py` |
 | Embedding PCA visualisation | `src/phase7_analysis/embedding_viz.py` |
-| CLI entry | `main.py` → `--mode analysis` (often with player_id or config) |
+| CLI entry | `main.py` → `--mode analyze` (often with player_id or config) |
 
 ---
 
@@ -40,7 +40,7 @@ Typically:
 
 ```bash
 cd GNN_StatsBomb
-python main.py --mode analysis
+python main.py --mode analyze
 ```
 
 (Exact CLI may take a player_id or config for which player to report on; see `main.py` and `report_builder.py`.)

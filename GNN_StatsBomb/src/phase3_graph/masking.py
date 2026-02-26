@@ -1,7 +1,7 @@
 """
 Feature-masking utilities for the GNN branch.
 
-Two independent masks are applied to the 122-D Phase 1 event vectors:
+Two independent masks are applied to the 126-D Phase 1 event vectors:
 
 1. **mask_spatial_360** — zeros out the 9-dim Spatial_360 block so the
    GNN must learn spatial context via explicit player nodes and
@@ -12,7 +12,7 @@ Two independent masks are applied to the 122-D Phase 1 event vectors:
    Used for the masked-action / imitation training objective (Phase 5).
    After masking, the surviving non-zero features are purely pre-action
    situational state: location, play_pattern, under_pressure,
-   counterpress, and pitch_zone.
+   counterpress, pitch_zone, and period.
 
    Position (32-57) is masked because it is a **player-level attribute**,
    not a situational one.  Two events at the same pitch location with the
@@ -24,7 +24,7 @@ Two independent masks are applied to the 122-D Phase 1 event vectors:
    the player node's ``position_idx`` embedding → ``h_player`` → ``z_p``,
    which is the correct channel for player identity.
 
-Index Layout (122-D)
+Index Layout (126-D)
 ────────────────────
   0-13   event_type        (14)  ← masked (IS the prediction target)
  14-15   location           (2)
@@ -43,6 +43,7 @@ Index Layout (122-D)
  95-103  scalars            (9)  ← partially masked (see below)
 104-112  pitch_zone         (9)
 113-121  spatial_360        (9)  ← masked for GNN (separate mask)
+122-125  period             (4)  ← NOT masked (situational context)
 
 Scalars (indices 95-103):
   95  duration           — MASKED (determined by the action taken)
@@ -73,7 +74,7 @@ def get_spatial_360_indices() -> List[int]:
 
 
 def mask_spatial_360(x: np.ndarray) -> np.ndarray:
-    """Zero out Spatial_360 dims.  Works on (122,) or (N, 122)."""
+    """Zero out Spatial_360 dims.  Works on (126,) or (N, 126)."""
     out = x.copy()
     out[..., _SPATIAL_360_START:_SPATIAL_360_END] = 0.0
     return out
@@ -103,7 +104,7 @@ def get_future_info_indices() -> List[int]:
 
 
 def mask_future_info(x: np.ndarray) -> np.ndarray:
-    """Zero out action/outcome/identity dims.  Works on (122,) or (N, 122)."""
+    """Zero out action/outcome/identity dims.  Works on (126,) or (N, 126)."""
     out = x.copy()
     for r in _MASKED_RANGES:
         out[..., r.start:r.stop] = 0.0

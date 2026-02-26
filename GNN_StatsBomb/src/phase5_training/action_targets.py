@@ -12,6 +12,7 @@ Targets per event:
                         Events without displacement get bin 0.
 """
 
+import logging
 import math
 from typing import Dict, List
 
@@ -20,6 +21,7 @@ import torch
 
 from ..config import EVENT_TYPES, ModelConfig
 
+logger = logging.getLogger(__name__)
 
 _EVENT_TYPE_TO_IDX: Dict[str, int] = {e: i for i, e in enumerate(EVENT_TYPES)}
 
@@ -40,8 +42,9 @@ class ActionTargetEncoder:
     """
     Compute discrete action targets from Phase 1 feature vectors.
 
-    The 122-D vector layout is used directly (see ``masking.py`` for
-    the index map).
+    The 126-D vector layout is used directly (see ``masking.py`` for
+    the index map).  Target indices (0-21) are in the first 22 dims
+    and are unaffected by the period feature appended at the end.
     """
 
     def __init__(self, config: ModelConfig):
@@ -55,7 +58,7 @@ class ActionTargetEncoder:
         """
         Parameters
         ----------
-        event_features : (T, 122)
+        event_features : (T, 126)
             **Un-masked** Phase 1 vectors (action info still present).
         event_types : list[str], length T
 
@@ -73,14 +76,18 @@ class ActionTargetEncoder:
         length_bin = torch.zeros(T, dtype=torch.long)
 
         for i in range(T):
-            # Action type
             etype = event_types[i]
-            action_type[i] = _EVENT_TYPE_TO_IDX.get(etype, 0)
+            idx = _EVENT_TYPE_TO_IDX.get(etype)
+            if idx is None:
+                logger.warning("Unknown event type %r at index %d, defaulting to 0", etype, i)
+                idx = 0
+            action_type[i] = idx
 
-            # Delta (indices 19, 20) and distance (index 21)
+            # Delta (indices 19, 20); distance recomputed from raw deltas
+            # so binning is independent of normalisation at index 21.
             dx = float(event_features[i, 19])
             dy = float(event_features[i, 20])
-            dist = float(event_features[i, 21])
+            dist = math.sqrt(dx * dx + dy * dy)
             has_end = float(event_features[i, 18])  # end_location_2 flag
 
             if has_end > 0.5 and (abs(dx) > 1e-6 or abs(dy) > 1e-6):

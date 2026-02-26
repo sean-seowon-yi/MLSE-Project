@@ -154,21 +154,21 @@ class SituationComparator:
         situation = self._describe_situation(global_event_idx, meta)
         predictions: Dict[int, Dict[str, np.ndarray]] = {}
 
-        for pid in player_ids:
-            z_p_np = self._get_z(pid)
-            if z_p_np is None:
-                continue
-            z_p = torch.tensor(z_p_np, dtype=torch.float32, device=self.device)
-            h_cond = self.model.film_condition(
-                h_ev.unsqueeze(0), z_p.unsqueeze(0)
-            )  # (1, d)
+        with torch.no_grad():
+            for pid in player_ids:
+                z_p_np = self._get_z(pid)
+                if z_p_np is None:
+                    continue
+                z_p = torch.tensor(z_p_np, dtype=torch.float32, device=self.device)
+                h_cond = self.model.film_condition(
+                    h_ev.unsqueeze(0), z_p.unsqueeze(0)
+                )  # (1, d)
 
-            with torch.no_grad():
                 at = F.softmax(self.model.action_type_head(h_cond).squeeze(0), dim=-1).cpu().numpy()
                 ang = F.softmax(self.model.angle_bin_head(h_cond).squeeze(0), dim=-1).cpu().numpy()
                 ln = F.softmax(self.model.length_bin_head(h_cond).squeeze(0), dim=-1).cpu().numpy()
 
-            predictions[pid] = {"action_type": at, "angle_bin": ang, "length_bin": ln}
+                predictions[pid] = {"action_type": at, "angle_bin": ang, "length_bin": ln}
 
         return {"situation": situation, "predictions": predictions}
 

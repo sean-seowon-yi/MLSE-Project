@@ -4,7 +4,7 @@ Feature projection modules for event and player nodes.
 Before feeding into the GNN, the raw features of each node type must be
 projected into a common latent space of dimension *d*.
 
-- **EventProjection**: 122-D sparse/mixed vector → d via MLP + LayerNorm.
+- **EventProjection**: 126-D sparse/mixed vector → d via MLP + LayerNorm.
 - **PlayerProjection**: (position_idx, team_flag, dx, dy) → d via
   learned position embedding + MLP + LayerNorm.
 """
@@ -16,20 +16,21 @@ from ..config import ModelConfig
 
 
 class EventProjection(nn.Module):
-    """Project 122-D Phase 1 event features to latent dim *d*."""
+    """Project Phase 1 event features (126-D) to latent dim *d*."""
 
     def __init__(self, config: ModelConfig):
         super().__init__()
         d = config.latent_dim
+        input_dim = getattr(config, "event_feature_dim", 126)
         self.net = nn.Sequential(
-            nn.Linear(122, d),
+            nn.Linear(input_dim, d),
             nn.ReLU(),
             nn.Linear(d, d),
             nn.LayerNorm(d),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: (*, 122) → (*, d)"""
+        """x: (*, input_dim) → (*, d)"""
         return self.net(x)
 
 

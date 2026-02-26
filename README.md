@@ -119,7 +119,7 @@ python main.py --mode full_pipeline
 
 This will:
 
-1. **prepare** — load events + 360, encode 122-D event features, save metadata & freeze frames  
+1. **prepare** — load events + 360, encode 126-D event features, save metadata & freeze frames  
 2. **build_possessions** — group events into StatsBomb possessions  
 3. **build_graphs** — build heterogeneous event+player graphs per possession  
 4. **train** — train the GNN with masked imitation + auxiliary objectives  
@@ -233,7 +233,7 @@ Across both pipelines, the core goals are:
 
 - **Graph-based reasoning** (StatsBomb 360):  
   Possessions are encoded as heterogeneous graphs with:
-  - Event nodes (122-D features, with Spatial_360 zeroed for the GNN).  
+  - Event nodes (126-D features, with Spatial_360 zeroed for the GNN).  
   - Player nodes (role embedding + team flag + relative geometry).  
   - Temporal, actor, and context edges (including off-ball players from 360).
   This lets the GNN reason jointly about sequence, actors, and surrounding players.

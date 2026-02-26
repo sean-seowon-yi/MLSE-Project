@@ -5,7 +5,7 @@ Wraps the feature projections, heterogeneous GNN encoder, attention
 pooling, and prediction heads into a single ``nn.Module``.
 
 Forward pass (per batch of possession graphs):
-  1. Project event features (122-D → d) and player features → d.
+  1. Project event features (126-D → d) and player features → d.
   2. Run heterogeneous GATv2 encoder → h_event, h_player.
   3. Pool actor embeddings **by real player_id** within the batch via
      learned AttentionPooling → z_p (one vector per unique player).
@@ -67,10 +67,14 @@ class PlayerSimilarityModel(nn.Module):
         h_event: torch.Tensor,
         z_p: torch.Tensor,
     ) -> torch.Tensor:
-        """Apply FiLM conditioning: gamma * h_event + beta."""
+        """Apply FiLM conditioning: (1 + gamma) * h_event + beta.
+
+        The ``1 +`` centres the scale factor at identity so that event
+        information flows from the first training step (gamma ≈ 0 at init).
+        """
         gamma = self.film_gamma(z_p)
         beta = self.film_beta(z_p)
-        return gamma * h_event + beta
+        return (1 + gamma) * h_event + beta
 
     def forward(
         self,

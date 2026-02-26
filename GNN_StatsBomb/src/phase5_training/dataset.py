@@ -51,7 +51,7 @@ class PossessionGraphDataset(Dataset):
 
         # Extract un-masked features for target computation
         global_indices = g.event_indices_global.numpy()
-        raw_feats = self.event_features[global_indices]  # (T, 122)
+        raw_feats = self.event_features[global_indices]  # (T, 126)
 
         # Compute action targets from un-masked features
         action_targets = self.target_encoder.encode(raw_feats, g.event_types)

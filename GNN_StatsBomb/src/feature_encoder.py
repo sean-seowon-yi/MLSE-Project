@@ -37,8 +37,9 @@ Feature groups
                              pass_cross, shot_xg, shot_first_time
 16  pitch_zone         9     3×3 grid one-hot (thirds × lanes)
 17  spatial_360        9     StatsBomb 360: teammate/opponent counts & positions, min dists
+18  period             4     One-hot match period (Period 1, Period 2, ET1, ET2)
                       ───
-              Total   122
+              Total   126
 """
 
 import math
@@ -60,6 +61,7 @@ from .config import (
     PASS_HEIGHTS,
     SHOT_TYPES,
     POSITIONS,
+    PERIODS,
     PITCH_LENGTH,
     PITCH_WIDTH,
 )
@@ -115,6 +117,7 @@ class EventFeatureEncoder:
             "pass_height":     {v: i for i, v in enumerate(PASS_HEIGHTS)},
             "shot_type":       {v: i for i, v in enumerate(SHOT_TYPES)},
             "position":        {v: i for i, v in enumerate(POSITIONS)},
+            "period":          {v: i for i, v in enumerate(PERIODS)},
         }
 
         # Feature-group sizes (for slicing / inspection)
@@ -136,6 +139,7 @@ class EventFeatureEncoder:
             "scalars":         9,
             "pitch_zone":      self.config.x_zones * self.config.y_zones,  # 9
             "spatial_360":     9,   # StatsBomb 360: counts + mean positions + min dists
+            "period":          len(PERIODS),            #  4
         }
         self.feature_dim = sum(self.group_sizes.values())
 
@@ -164,6 +168,7 @@ class EventFeatureEncoder:
             "event_id", "match_id", "competition_id", "season_id",
             "player_id", "player_name", "team_id", "team_name",
             "position_name", "event_type", "period", "minute", "second",
+            "timestamp",
             "possession_number", "possession_team_id", "possession_team_name",
             "shot_outcome", "shot_xg",
         ]
@@ -225,8 +230,8 @@ class EventFeatureEncoder:
 
         dx = nex - nx if has_end else 0.0
         dy = ney - ny if has_end else 0.0
-        dist = math.sqrt(dx * dx + dy * dy)
-        angle = math.atan2(dy, dx) if has_end else 0.0
+        dist = math.sqrt(dx * dx + dy * dy) / math.sqrt(2)  # normalise to [0, 1]
+        angle = (math.atan2(dy, dx) / math.pi) if has_end else 0.0  # normalise to [-1, 1]
 
         # -- Position (mirror label if needed) ----------------------------
         pos_name = _pos_raw
@@ -235,7 +240,9 @@ class EventFeatureEncoder:
 
         # -- Body-part: combine pass and shot body parts ------------------
         body_part = None
-        etype = row.get("event_type") or "Pass"
+        etype = row.get("event_type")
+        if not etype or (isinstance(etype, float) and math.isnan(etype)):
+            etype = "Unknown"
         if etype == "Pass":
             body_part = row.get("pass_body_part")
         elif etype == "Shot":
@@ -278,7 +285,7 @@ class EventFeatureEncoder:
         # -- Assemble vector -----------------------------------------------
         parts: List[np.ndarray] = []
 
-        parts.append(self._one_hot("event_type", row.get("event_type") or "Pass"))
+        parts.append(self._one_hot("event_type", etype))
         parts.append(np.array([nx, ny], dtype=np.float32))
         parts.append(np.array([nex, ney, has_end], dtype=np.float32))
         parts.append(np.array([dx, dy], dtype=np.float32))
@@ -319,6 +326,12 @@ class EventFeatureEncoder:
         )
         parts.append(spatial)
 
+        # Match period (situational context — not masked at training)
+        # Period 5 (penalty shootout) is excluded upstream in data_preparation.py
+        period_val = int(row.get("period", 1) or 1)
+        period_name = f"Period {period_val}" if period_val <= 2 else f"Extra Time {period_val - 2}"
+        parts.append(self._one_hot("period", period_name))
+
         return np.concatenate(parts)
 
     # ── helpers ──────────────────────────────────────────────────────
@@ -353,6 +366,8 @@ class EventFeatureEncoder:
         Returns zeros when freeze_frame is None or empty.
         """
         out = np.zeros(9, dtype=np.float32)
+        out[7] = 1.0  # default: no nearby teammate → max normalised distance
+        out[8] = 1.0  # default: no nearby opponent → max normalised distance
         if not freeze_frame or not isinstance(freeze_frame, list):
             return out
 
@@ -413,7 +428,7 @@ _MAX_DURATION = 15.0       # seconds; most events are < 10 s
 
 
 def _is_nan(v) -> bool:
-    """Return True for None, NaN, or pandas NA."""
+    """Return True for None or float NaN."""
     if v is None:
         return True
     try:

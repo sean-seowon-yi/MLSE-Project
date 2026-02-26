@@ -10,7 +10,7 @@ Phase 1 loads StatsBomb events (and, by default, StatsBomb 360 freeze frames), f
 |------|----------------|
 | 1. Load | Load competitions → matches → events; when `use_360=True`, restrict to matches with 360 data and to events that have a 360 frame; attach `freeze_frame` to each event. |
 | 2. Summarise | Print event-type distribution and unique players/teams/matches. |
-| 3. Encode | Convert each event row into a **122-dimensional** vector (event features + optional 360 spatial features), with coordinate normalisation; left/right roles are kept distinct by default (configurable via `feature.mirror_sides`). |
+| 3. Encode | Convert each event row into a **126-dimensional** vector (event features + optional 360 spatial features + period), with coordinate normalisation; left/right roles are kept distinct by default (configurable via `feature.mirror_sides`). |
 | 4. Save | Write `event_features.npy`, `event_metadata.parquet`, `feature_names.json`, and `data_stats.json` to `processed_data/`. |
 
 ---
@@ -42,9 +42,9 @@ Counts are printed to the console: event-type distribution, and unique `player_i
 
 **Code:** `EventFeatureEncoder` (`src/feature_encoder.py`).
 
-Each event row is turned into a **122-D** vector. By default the encoder does **not** mirror (left/right roles stay distinct). **Mirroring** is applied only when `feature.mirror_sides=True`: for events whose actor has a “Right …” position (e.g. Right Back, Right Wing), the y-axis is flipped (y′ = 80 − y) and the position label is remapped to the corresponding “Left …” role, so flank roles are comparable for player similarity.
+Each event row is turned into a **126-D** vector. By default the encoder does **not** mirror (left/right roles stay distinct). **Mirroring** is applied only when `feature.mirror_sides=True`: for events whose actor has a “Right …” position (e.g. Right Back, Right Wing), the y-axis is flipped (y′ = 80 − y) and the position label is remapped to the corresponding “Left …” role, so flank roles are comparable for player similarity.
 
-### Feature groups (122 dimensions total)
+### Feature groups (126 dimensions total)
 
 | # | Group | Dims | Description |
 |---|--------|-----|-------------|
@@ -65,6 +65,7 @@ Each event row is turned into a **122-D** vector. By default the encoder does **
 | 15 | scalars | 9 | duration (norm), under_pressure, counterpress, pass_length, pass_angle, pass_switch, pass_cross, shot_xg, shot_first_time |
 | 16 | pitch_zone | 9 | 3×3 grid one-hot (x = thirds, y = lanes) |
 | 17 | spatial_360 | 9 | Teammate/opponent/keeper counts (norm), mean teammate/opponent positions (norm), min dist to teammate, min dist to opponent (norm); zeros when no 360 |
+| 18 | period | 4 | One-hot match period (Period 1, Period 2, Extra Time 1, Extra Time 2); not masked at training |
 
 All coordinates and relevant scalars are normalised/clipped so the matrix has no NaN/Inf; unknown categorical values yield an all-zero one-hot slice.
 
@@ -76,10 +77,10 @@ All coordinates and relevant scalars are normalised/clipped so the matrix has no
 
 | File | Content |
 |------|--------|
-| **event_features.npy** | NumPy array of shape `(n_events, 122)`, dtype float32. Row order matches metadata. |
+| **event_features.npy** | NumPy array of shape `(n_events, 126)`, dtype float32. Row order matches metadata. |
 | **event_metadata.parquet** | One row per event: `event_id`, `match_id`, `competition_id`, `season_id`, `player_id`, `player_name`, `team_id`, `team_name`, `position_name`, `event_type`, `period`, `minute`, `second`. No `freeze_frame` column. |
 | **freeze_frames.pkl** | List of freeze-frame lists (when `use_360=True`), aligned by event index; used in Phase 3. |
-| **feature_names.json** | List of 122 feature names (for slicing/debugging). |
+| **feature_names.json** | List of 126 feature names (for slicing/debugging). |
 | **data_stats.json** | Summary: `n_events`, `n_players`, `n_teams`, `n_matches`, `n_competitions`, `feature_dim`, `event_type_counts`, `mirror_sides`, `use_360`. |
 
 If any NaN/Inf are found in the feature matrix, they are replaced by 0 before saving and a warning is printed.

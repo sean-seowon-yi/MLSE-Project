@@ -62,7 +62,7 @@ Phase 7: Analysis (situation-level counterfactual comparison)
 
 **Goal**: Convert raw StatsBomb JSON events into a fixed-length numeric vector per event.
 
-Each event is encoded into a **122-dimensional** feature vector:
+Each event is encoded into a **126-dimensional** feature vector:
 
 | Index Range | Group | Dims | Description |
 |---|---|---|---|
@@ -78,10 +78,11 @@ Each event is encoded into a **122-dimensional** feature vector:
 | 95–103 | Scalars | 9 | Duration, under_pressure, counterpress, pass_length, pass_angle, etc. |
 | 104–112 | Pitch zone | 9 | 3×3 grid one-hot (thirds × lanes) |
 | 113–121 | Spatial 360 | 9 | From 360 freeze frames: teammate count, opponent count, keeper flag, mean teammate position (x, y), mean opponent position (x, y), min distance to teammate, min distance to opponent |
+| 122–125 | Period | 4 | One-hot match period (Period 1, Period 2, Extra Time 1, Extra Time 2) |
 
 Left and right positions are kept distinct (not mirrored) so that preferred foot and tactical side are preserved.
 
-**Outputs**: `event_features.npy` (N × 122), `event_metadata.parquet`, `freeze_frames.pkl`.
+**Outputs**: `event_features.npy` (N × 126), `event_metadata.parquet`, `freeze_frames.pkl`.
 
 ### Data Processing Reasoning
 
@@ -106,7 +107,7 @@ Each possession is defined by StatsBomb's `possession_number` and `possession_te
 
 Possessions with fewer than 2 events or more than 200 are discarded.
 
-Each possession also stores per-event timestamps (seconds from match start, computed as `minute × 60 + second`), used downstream in Phase 3 for computing time-delta edge attributes on temporal edges.
+Each possession also stores per-event timestamps with millisecond precision (parsed from StatsBomb's period-relative `timestamp` field, e.g. `"00:23:15.432"` → `1395.432` seconds), used downstream in Phase 3 for computing time-delta edge attributes on temporal edges. Since possessions never span periods, relative deltas within a possession are always correct.
 
 **Output**: `possessions.pkl` — list of `Possession` objects, each containing global event indices, per-event metadata, and per-event timestamps.
 
@@ -127,7 +128,7 @@ Each possession also stores per-event timestamps (seconds from match start, comp
 
 | Type | Features | Description |
 |---|---|---|
-| `event` | 122-D vector (Spatial_360 block zeroed) | One node per on-ball action in the possession. The 360 summary stats are zeroed so the GNN must learn spatial context from explicit player nodes. |
+| `event` | 126-D vector (Spatial_360 block zeroed) | One node per on-ball action in the possession. The 360 summary stats are zeroed so the GNN must learn spatial context from explicit player nodes. |
 | `player` | [position_idx, is_possession_team, dx, dy] | One node per distinct player. **Actor** players (who performed events) get their real position and player_id. **Off-ball** players (from 360 freeze frames) get their spatial offset from the ball. |
 
 ### Edge Types (Relations)
@@ -149,7 +150,7 @@ The 360 freeze frames are critical: they create `context_for` edges that tell th
 ### Data Processing Reasoning
 
 - **Why heterogeneous graphs (not sequences)**: A possession is more than a sequence of events. Each event involves an actor, and that event occurs in the context of where all other players are standing. A flat sequence model (LSTM, Transformer over events) would need the 360 spatial context injected as auxiliary features on each event — losing the explicit structure of "player X is 5 metres to the left." A heterogeneous graph natively encodes: temporal ordering (event → event edges), who did what (player ↔ event edges), and who was where (context player → event edges). The GNN can then reason about all of these simultaneously.
-- **Why separate node types for events and players**: Events and players are fundamentally different entities. An event has 122 features describing what happened; a player node has 4 features describing who they are and where they stand. Heterogeneous typing lets the model learn separate projection and attention parameters for each, rather than forcing both into a single feature space.
+- **Why separate node types for events and players**: Events and players are fundamentally different entities. An event has 126 features describing what happened; a player node has 4 features describing who they are and where they stand. Heterogeneous typing lets the model learn separate projection and attention parameters for each, rather than forcing both into a single feature space.
 - **Why off-ball players get `Unknown` position**: Off-ball players from 360 freeze frames don't carry position labels in the StatsBomb data — only the actor's position is known. Rather than guessing or omitting them, they receive the `Unknown` position embedding (learned from data), and their spatial offset (dx, dy) from the ball carries the crucial information about where they are.
 - **Why actor players get dx=0, dy=0**: The actor is at the ball by definition. Their spatial information is already encoded in the event node's location. The actor node's value comes from the position embedding and team flag, not spatial offset.
 - **Why bidirectional temporal edges**: The `next` edges propagate information forward in time (what happened earlier informs the current state). The `prev` edges propagate backward (the eventual outcome of the possession influences the interpretation of earlier events). Together they let every event node attend to the full temporal context of the possession.
@@ -167,7 +168,7 @@ The model learns a **player trait embedding** `z_p` (64-D vector) for each playe
 
 #### 1. Feature Projections
 
-- **EventProjection**: 122-D → 64-D via MLP (Linear → ReLU → Linear → LayerNorm)
+- **EventProjection**: 126-D → 64-D via MLP (Linear → ReLU → Linear → LayerNorm)
 - **PlayerProjection**: Position embedding (26 positions → 16-D) concatenated with 3 continuous features (team flag, dx, dy) → MLP → 64-D
 
 #### 2. Heterogeneous GNN Encoder (2-layer GATv2)
@@ -204,7 +205,7 @@ To predict what action a player would take in a given situation, the model uses 
 ```
 γ = Linear(z_p)          →  per-dimension scale
 β = Linear(z_p)          →  per-dimension shift
-h_conditioned = γ ⊙ h_event + β
+h_conditioned = (1 + γ) ⊙ h_event + β
 ```
 
 This is then passed to the action prediction heads (action type, direction, length).
@@ -243,6 +244,7 @@ What survives masking (the "situational state"):
 - Play pattern (23–31): open play, corner, free kick, etc.
 - Under pressure / counterpress (96–97)
 - Pitch zone (104–112): 3×3 grid zone
+- Period (122–125): match stage (first half, second half, extra time)
 - Spatial 360 is zeroed at the event-feature level (handled by GNN via player nodes)
 
 **Why this masking scheme**: The model must predict the action from the pre-action situational state — if the action type or its consequences are visible in the input, the model can trivially copy the answer. Everything that reveals *what happened* (event type, body part, outcomes, displacement, duration) is zeroed. Everything that describes *the state before the action* (location, play pattern, pressure, pitch zone) is preserved. The boundary is strict: even `duration` is masked because a 0.1s event (touch) vs. a 5s event (long carry) reveals the action type.
@@ -367,6 +369,40 @@ They address different aspects: the contrastive loss provides a direct embedding
 
 ---
 
+## Design Discussion: Match Time and Score as Features
+
+### Match time (period one-hot) — implemented
+
+Players behave differently depending on match stage. A center-back at minute 5 plays a safe short pass; at minute 88 when chasing a goal, the same player might launch a long ball forward. Since the system defines "same situation" as "same state → same action," the match period is part of the situational state that shapes what a reasonable action is.
+
+**Implementation: period is encoded as a 4-D one-hot (indices 122–125), appended after Spatial_360.**
+
+- Vocabulary: Period 1, Period 2, Extra Time 1, Extra Time 2 (from StatsBomb `event["period"]`, where 1=first half, 2=second half, 3=ET1, 4=ET2). Period 5 (penalty shootout) events are **excluded** in `data_preparation.py` — shootout penalties are not open play and carry no useful decision-making signal.
+- The feature vector is now **126-D** (was 122-D).
+- The feature is **not masked** at training — it is pre-action situational context (like location, play pattern, pitch zone).
+- 4 dimensions out of 126 is small enough that it will not dominate the feature space; it is comparable in scale to the 2-D location or 2-D distance/angle groups.
+- FiLM conditioning means `z_p` must still explain player-level variation given the same period context — the model cannot collapse player traits by attributing all behavioral differences to "what period it is."
+- The period field is already present on every StatsBomb event (`event["period"]`), so no new data source is needed.
+
+**Why period one-hot rather than normalised minute:**
+
+- Period boundaries (half-time, extra time) are categorical discontinuities — minute 45 in period 1 and minute 45 in period 2 are very different contexts. A one-hot captures this cleanly.
+- Normalised minute within each period could be added as a further refinement, but the coarse period signal is sufficient for a first iteration and avoids over-weighting time information.
+
+**Note:** This is a feature-dimension change — existing checkpoints and processed data are incompatible. Phase 1 must be re-run to produce 126-D features, followed by Phases 2–5.
+
+### Score differential — considered and rejected
+
+Score state affects behavior: a team losing 0-2 at minute 80 presses high and plays direct. However, incorporating score differential was rejected for the following reasons:
+
+1. **Confounds player trait with team strength.** The system compares players across different matches and teams. If player A's team is usually winning and player B's team is usually losing, their embeddings could diverge because of the team's match context — not because the players themselves decide differently. This would cause similarity to correlate with "plays for a strong/weak team" rather than individual style.
+2. **Partially redundant with behavior.** A team losing will naturally produce more long balls, more shots, more aggressive pressing — patterns the model already observes through the event sequence and graph structure.
+3. **Data complexity.** StatsBomb events do not carry a running score field; computing it requires tracking goals throughout the match, adding a preprocessing step with edge cases (own goals, VAR reversals).
+
+For these reasons, score is not included. If future analysis suggests score context materially improves embedding quality without introducing the team-strength confound, it can be revisited with controls (e.g., conditioning on score differential as a separate input to the outcome head only, not to the action prediction path).
+
+---
+
 ## Key Configuration
 
 | Parameter | Value | Description |
@@ -445,7 +481,7 @@ The following issues were identified during a full code audit and corrected:
 **Motivation**: The graph structure encoded event ordering but not tempo. Two possessions with identical event sequences but vastly different pacing (2-second counterattack vs. 15-second buildup) produced identical graphs — the GNN had no way to distinguish them. Since tempo directly affects player decisions (time pressure forces different choices), this was a missing signal for achieving the system's goal.
 
 **Changes**:
-- `Possession` dataclass: added `timestamps_sec` field (seconds from match start, computed from `minute * 60 + second`).
+- `Possession` dataclass: added `timestamps_sec` field (millisecond-precision seconds, parsed from StatsBomb's period-relative `timestamp` string; falls back to `minute * 60 + second` if the column is absent).
 - `PossessionGraphBuilder`: computes per-edge time deltas between consecutive events, normalises as `min(Δt / 30, 1.0)`, and stores as `edge_attr` (shape `(n_edges, 1)`) on both `next` and `prev` edge types.
 - `PossessionGNNEncoder`: temporal `GATv2Conv` layers now use `edge_dim=1`. The `forward` method accepts an optional `edge_attr_dict` and passes it to `HeteroConv` via the `edge_attr_dict` kwarg pattern.
 - `PlayerSimilarityModel`: `forward` and `encode_possession` extract `edge_attr` from `HeteroData` and route it to the GNN.
@@ -462,7 +498,7 @@ GNN_StatsBomb/
 ├── src/
 │   ├── config.py                    # All configuration and vocabularies
 │   ├── data_preparation.py          # Phase 1A: StatsBomb JSON loading
-│   ├── feature_encoder.py           # Phase 1B: 122-D feature encoding
+│   ├── feature_encoder.py           # Phase 1B: 126-D feature encoding
 │   ├── phase2_possession/
 │   │   └── possession_builder.py    # Phase 2: possession grouping
 │   ├── phase3_graph/
@@ -485,6 +521,11 @@ GNN_StatsBomb/
 │       ├── report_builder.py        # Orchestrates full analysis
 │       ├── situation_comparison.py   # Counterfactual action prediction
 │       └── embedding_viz.py         # PCA visualisations
+├── docs/                            # Per-phase documentation
+│   ├── README.md                    # Docs index
+│   ├── PHASE1.md … PHASE7.md       # One file per phase
+│   ├── DATA_QUALITY.md              # Data quality notes
+│   └── PLAYER_SIMILARITY_FINAL_PLAN.md  # Original design plan
 ├── processed_data/                  # Phase 1–3 outputs
 ├── checkpoints/                     # Trained model weights
 └── embeddings/

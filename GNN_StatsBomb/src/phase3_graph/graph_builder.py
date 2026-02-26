@@ -6,7 +6,7 @@ For each possession we build a ``torch_geometric.data.HeteroData`` with:
 Node types
 ──────────
   ``"event"``  — one node per on-ball event in the possession.
-                 Features: 122-D Phase 1 vector (Spatial_360 zeroed).
+                 Features: 126-D Phase 1 vector (Spatial_360 zeroed).
   ``"player"`` — one node per distinct player (actors + off-ball from 360).
                  Features: [position_idx, is_possession_team, dx, dy].
 
@@ -19,6 +19,7 @@ Edge types (relation triplets)
   ("player", "context_for",  "event")   — off-ball 360 player → event
 """
 
+import logging
 import math
 import pickle
 from collections import defaultdict
@@ -34,6 +35,8 @@ from ..config import GraphConfig, POSITIONS, PITCH_LENGTH, PITCH_WIDTH, get_conf
 from ..phase2_possession.possession_builder import Possession, PossessionBuilder
 from .masking import mask_spatial_360
 
+
+logger = logging.getLogger(__name__)
 
 _POS_TO_IDX: Dict[str, int] = {p: i for i, p in enumerate(POSITIONS)}
 _UNKNOWN_POS_IDX = _POS_TO_IDX.get("Unknown", len(POSITIONS) - 1)
@@ -65,7 +68,7 @@ class PossessionGraphBuilder:
         Parameters
         ----------
         possessions : list[Possession]
-        event_features : ndarray (n_events, 122)
+        event_features : ndarray (n_events, 126)
         freeze_frames : list
             Length n_events.  Each entry is either a list of freeze-frame
             dicts or None.
@@ -78,7 +81,7 @@ class PossessionGraphBuilder:
                 if g is not None:
                     graphs.append(g)
             except Exception as exc:
-                # Skip malformed possessions silently (logged in batch runs)
+                logger.warning("Skipping possession %s: %s", poss.pos_key, exc)
                 continue
 
         return graphs
@@ -96,7 +99,7 @@ class PossessionGraphBuilder:
             return None
 
         # ── Event node features (mask Spatial_360) ───────────────────
-        raw_feats = event_features[poss.event_indices]  # (T, 122)
+        raw_feats = event_features[poss.event_indices]  # (T, 126)
         event_x = mask_spatial_360(raw_feats)
 
         # ── Collect player nodes ─────────────────────────────────────
@@ -134,7 +137,7 @@ class PossessionGraphBuilder:
             p_node = player_key_to_idx[actor_key]
 
             # Update relative geometry to latest event's ball position
-            if ball_x > 0 or ball_y > 0:
+            if ball_x >= 0 and ball_y >= 0:
                 player_features[p_node][2] = 0.0  # actor is at the ball
                 player_features[p_node][3] = 0.0
 

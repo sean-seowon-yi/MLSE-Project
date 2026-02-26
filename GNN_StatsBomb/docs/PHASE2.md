@@ -9,7 +9,7 @@ Phase 2 groups events into **possession sequences** — continuous spells where 
 - Group events by StatsBomb `possession_number` and `possession_team_id` within each match.
 - Sort events within each possession by time.
 - Compute possession-level labels: `ends_in_shot`, `ends_in_goal`, `total_xg`.
-- Store per-event timestamps (seconds from match start) for Phase 3 temporal edge attributes.
+- Store per-event timestamps (period-relative seconds with millisecond precision) for Phase 3 temporal edge attributes.
 - Filter out possessions that are too short or too long.
 
 ---
@@ -34,7 +34,7 @@ Possession membership comes from StatsBomb event fields: `possession_number` and
 ### Possession dataclass (conceptually)
 
 - **event_indices**: global indices into the event feature matrix / metadata.
-- **timestamps_sec**: seconds from match start per event (`minute × 60 + second`), used in Phase 3 for time-delta on temporal edges.
+- **timestamps_sec**: period-relative seconds per event (millisecond precision, parsed from StatsBomb's `timestamp` field; falls back to `minute × 60 + second`), used in Phase 3 for time-delta on temporal edges.
 - **ends_in_shot** (bool): whether the possession contains a Shot event (in practice this approximates “ends in shot”).
 - **ends_in_goal** (bool): whether the possession contains a goal.
 - **total_xg** (float): sum of xG in the possession.
@@ -51,7 +51,7 @@ Possession membership comes from StatsBomb event fields: `possession_number` and
 | Component | Location |
 |-----------|----------|
 | Possession definition & builder | `src/phase2_possession/possession_builder.py` |
-| CLI entry | `main.py` → `--mode possession` |
+| CLI entry | `main.py` → `--mode build_possessions` |
 
 ---
 
@@ -59,7 +59,7 @@ Possession membership comes from StatsBomb event fields: `possession_number` and
 
 ```bash
 cd GNN_StatsBomb
-python main.py --mode possession
+python main.py --mode build_possessions
 ```
 
 Requires Phase 1 outputs in `processed_data/` (e.g. `event_metadata.parquet`).

@@ -99,8 +99,6 @@ class EmbeddingGenerator:
             out_dict = self.model.encode_possession(batched)
             h_player_all = out_dict["player"].cpu().numpy()
 
-            player_batch_vec = batched["player"].batch.cpu().numpy()
-
             player_offsets = np.zeros(len(masked_graphs) + 1, dtype=np.int64)
             for i, g in enumerate(masked_graphs):
                 player_offsets[i + 1] = player_offsets[i] + g["player"].x.shape[0]

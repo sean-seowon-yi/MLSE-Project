@@ -14,7 +14,7 @@ Learn a **player trait embedding** `z_p` (64-D) per player such that players who
 
 ### 1. Feature projections
 
-- **EventProjection**: 122-D → 64-D (Linear → ReLU → Linear → LayerNorm).
+- **EventProjection**: 126-D → 64-D (Linear → ReLU → Linear → LayerNorm).
 - **PlayerProjection**: Position embedding (26 → 16-D) concat with [is_possession_team, dx, dy] → MLP → 64-D.
 
 ### 2. Heterogeneous GNN encoder (2-layer GATv2)
@@ -43,7 +43,7 @@ Trained end-to-end so that high-leverage possessions can be up-weighted.
 ### 4. FiLM conditioning (player → action prediction)
 
 - γ = Linear(z_p), β = Linear(z_p).
-- h_conditioned = γ ⊙ h_event + β.
+- h_conditioned = (1 + γ) ⊙ h_event + β.
 - Action heads (type, angle bin, length bin) take **h_conditioned** so that predictions depend multiplicatively on z_p.
 
 ### 5. Prediction heads

@@ -6,7 +6,7 @@ Phase 3 converts each possession into a **heterogeneous graph** (`HeteroData`) t
 
 ## Goal
 
-- One **event** node per on-ball action in the possession (features: 122-D with Spatial_360 block **zeroed**).
+- One **event** node per on-ball action in the possession (features: 126-D with Spatial_360 block **zeroed**).
 - One **player** node per distinct actor or off-ball (360) player; features include position (or Unknown for off-ball), team flag, and spatial offset (dx, dy) from the ball.
 - **Edges**: temporal (`next`/`prev` with time-delta attribute), actor-event (`acts_in`/`performed_by`), and context (`context_for` from 360).
 - Output a list of `HeteroData` graphs for training and inference.
@@ -18,7 +18,7 @@ Phase 3 converts each possession into a **heterogeneous graph** (`HeteroData`) t
 | Source | Description |
 |--------|-------------|
 | **possessions.pkl** | From Phase 2: list of `Possession` (event indices, timestamps_sec, labels). |
-| **event_features.npy** | From Phase 1: (N × 122) event feature matrix. |
+| **event_features.npy** | From Phase 1: (N × 126) event feature matrix. |
 | **freeze_frames.pkl** | From Phase 1: list of freeze-frame lists, aligned by event index (for 360 context_for edges). |
 
 ---
@@ -35,7 +35,7 @@ Phase 3 converts each possession into a **heterogeneous graph** (`HeteroData`) t
 
 | Type | Features | Description |
 |------|----------|-------------|
-| **event** | 122-D (Spatial_360 block zeroed) | One node per on-ball event. The GNN must use player nodes for spatial context, not the 360 summary in the event vector. |
+| **event** | 126-D (Spatial_360 block zeroed) | One node per on-ball event. The GNN must use player nodes for spatial context, not the 360 summary in the event vector. |
 | **player** | [position_idx, is_possession_team, dx, dy] | One per distinct player. **Actors**: real position, player_id; dx=0, dy=0. **Off-ball** (360): Unknown position, spatial offset from ball. |
 
 ---
@@ -67,7 +67,7 @@ Phase 3 converts each possession into a **heterogeneous graph** (`HeteroData`) t
 |-----------|----------|
 | Graph builder | `src/phase3_graph/graph_builder.py` |
 | Masking (event-feature level) | `src/phase3_graph/masking.py` |
-| CLI entry | `main.py` → `--mode graph` |
+| CLI entry | `main.py` → `--mode build_graphs` |
 
 ---
 
@@ -75,7 +75,7 @@ Phase 3 converts each possession into a **heterogeneous graph** (`HeteroData`) t
 
 ```bash
 cd GNN_StatsBomb
-python main.py --mode graph
+python main.py --mode build_graphs
 ```
 
 Requires Phase 1 and Phase 2 outputs in `processed_data/`.
