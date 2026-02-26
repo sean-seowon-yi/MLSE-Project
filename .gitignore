@@ -24,6 +24,8 @@ build/
 *.out.1
 *.png
 
+!requirements.txt
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb_checkpoints
