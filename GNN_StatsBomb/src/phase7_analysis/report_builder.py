@@ -20,7 +20,6 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import torch
-import pickle
 
 from ..config import Config, POSITION_GROUPS
 from ..phase3_graph import PossessionGraphBuilder

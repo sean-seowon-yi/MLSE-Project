@@ -24,8 +24,7 @@ import json
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field
-from collections import defaultdict
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd

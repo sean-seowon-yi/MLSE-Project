@@ -24,6 +24,7 @@ This folder contains phase-by-phase documentation for the player similarity pipe
 |----------|-------------|
 | [DATA_QUALITY.md](DATA_QUALITY.md) | Edge cases, clamping, missing data, integrity notes for Phase 1 |
 | [PLAYER_SIMILARITY_FINAL_PLAN.md](PLAYER_SIMILARITY_FINAL_PLAN.md) | High-level plan and design notes |
+| [CODE_AUDIT.md](CODE_AUDIT.md) | Validity, integrity, and logic audit of all Python code |
 
 ---
 
