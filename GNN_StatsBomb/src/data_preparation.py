@@ -154,7 +154,7 @@ class StatsBombDataLoader:
     def load_competitions(self) -> List[Dict]:
         """Return the full competitions.json list, optionally filtered."""
         path = self.base_path / "competitions.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             comps = json.load(f)
 
         if self.config.competition_ids:
@@ -183,7 +183,7 @@ class StatsBombDataLoader:
             if not match_file.exists():
                 continue
 
-            with open(match_file) as f:
+            with open(match_file, encoding="utf-8") as f:
                 match_list = json.load(f)
 
             for m in match_list:
@@ -220,14 +220,14 @@ class StatsBombDataLoader:
         if not event_file.exists():
             return []
 
-        with open(event_file) as f:
+        with open(event_file, encoding="utf-8") as f:
             raw_events = json.load(f)
 
         event_uuid_to_freeze: Dict[str, List[Dict]] = {}
         if self.config.use_360:
             three60_file = self.base_path / self.config.three_sixty_dir / f"{match.match_id}.json"
             if three60_file.exists():
-                with open(three60_file) as f:
+                with open(three60_file, encoding="utf-8") as f:
                     frames_360 = json.load(f)
                 for fr in frames_360:
                     event_uuid_to_freeze[fr["event_uuid"]] = fr.get("freeze_frame") or []
