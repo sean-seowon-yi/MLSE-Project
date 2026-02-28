@@ -15,6 +15,8 @@ Both pipelines ultimately produce:
 - A vector embedding `z_p` for each player, and  
 - Tools to rank other players by similarity and interpret *why* they are similar (behavioural and situation-level analysis).
 
+**Data not included.** You must obtain both datasets yourself and place them in the repo. **SkillCorner** tracking data: obtain and place under `SkillCorner/`. **StatsBomb** open data (events + 360): clone or download and place under `StatsBomb/`.
+
 ---
 
 ## Documentation (links)
