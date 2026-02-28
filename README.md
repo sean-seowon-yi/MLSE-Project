@@ -22,6 +22,7 @@ Both pipelines ultimately produce:
 | Document | Description |
 |----------|-------------|
 | [docs/data.md](docs/data.md) | SkillCorner & StatsBomb data overview (shared). |
+| [progress_reports/](progress_reports/) | Project progress reports (milestone / periodic reports). |
 | **GNN_SkillCorner** | |
 | [GNN_SkillCorner/README.md](GNN_SkillCorner/README.md) | SkillCorner pipeline overview and quick start. |
 | [GNN_SkillCorner/docs/PIPELINE_DETAILS.md](GNN_SkillCorner/docs/PIPELINE_DETAILS.md) | Phase-by-phase pipeline details (tracking → graphs → train → embeddings). |
@@ -37,7 +38,7 @@ Both pipelines ultimately produce:
 | [GNN_StatsBomb/docs/PHASE6.md](GNN_StatsBomb/docs/PHASE6.md) | Inference & similarity search. |
 | [GNN_StatsBomb/docs/PHASE7.md](GNN_StatsBomb/docs/PHASE7.md) | Situation-level analysis. |
 | [GNN_StatsBomb/docs/DATA_QUALITY.md](GNN_StatsBomb/docs/DATA_QUALITY.md) | Data quality, edge cases, clamping, missing 360. |
-| [GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md](GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md) | SOTA assessment and improvement roadmap. |
+| [GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md](GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md) | SOTA assessment, critical vulnerabilities & blind spots, and improvement roadmap. |
 | [GNN_StatsBomb/docs/PLAYER_SIMILARITY_FINAL_PLAN.md](GNN_StatsBomb/docs/PLAYER_SIMILARITY_FINAL_PLAN.md) | Original high-level plan and design notes. |
 
 ---
@@ -97,10 +98,13 @@ Project/
 │   ├── embeddings/           # Player embeddings, reports, PCA plots (generated)
 │   └── processed_data/       # Encoded events, possessions, graphs (generated)
 │
+├── progress_reports/        # Project progress reports (e.g. milestone PDFs)
 ├── assets/                   # Media (e.g. sample videos; not tracked)
 ├── SkillCorner/              # SkillCorner data (local only; not tracked)
 └── StatsBomb/                # StatsBomb data (local only; not tracked)
 ```
+
+The **`progress_reports/`** folder holds project progress reports (e.g. milestone or periodic reports, often as PDFs). Add new reports here as the project advances.
 
 ---
 
@@ -175,7 +179,9 @@ Phase 7:
 - Picks query players and their nearest neighbours in embedding space.  
 - Samples real game situations (events) from the query player.  
 - For each situation, compares **predicted action distributions** (type, direction, length) of the query vs candidates, holding the state fixed.  
-- Saves text reports and visualisations (bar charts, direction plots, PCA neighbourhoods) under `GNN_StatsBomb/embeddings/analysis/`.
+- Saves text reports and visualisations under `GNN_StatsBomb/embeddings/analysis/`:  
+  - **Bar charts** — action-type and direction (angle-bin) probabilities per situation.  
+  - **PCA plots** — global embedding space in three variants (by position group, by subgroup, by full position), plus per-query neighbourhood views (query and top-k highlighted).
 
 For full design details (data, model, loss functions, masking, graph structure, assumptions), see:
 

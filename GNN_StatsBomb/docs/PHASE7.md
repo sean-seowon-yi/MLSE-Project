@@ -13,13 +13,36 @@ Phase 7 validates **player similarity** in concrete situations: for a query play
 
 ---
 
+## Configuration
+
+Analysis behaviour is controlled by `ReportConfig` in `report_builder.py`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `num_random_queries` | 5 | Number of query players to analyse when `query_player_ids` is not set. |
+| `random_seed` | 42 | Seed for query and event sampling. |
+| `query_player_ids` | None | If set, only these player IDs are used as queries (overrides random sampling). |
+| `situations_per_query` | 5 | Max number of real game events sampled per query player for situation comparison. |
+| `top_k_neighbours` | 5 | Number of nearest neighbours to include in reports and plots. |
+
+---
+
 ## Outputs
 
-- **Text reports**: Per-situation predicted action type, direction, and length distributions for query and candidates.
-- **Bar charts**: Grouped bars comparing action probabilities across players per situation.
-- **PCA plots**: 2D embedding space with query and neighbours highlighted.
+All artifacts are written under `embeddings/analysis/`.
 
-Artifacts are written under `embeddings/analysis/` (e.g. `report_<player_id>.txt`, situation-specific PNGs).
+- **Text reports**: `report_<player_id>.txt` — per-situation predicted action type, direction, and length distributions for query and candidates.
+- **Bar charts (per situation)**:
+  - `situation_<player_id>_s<N>_actions.png` — grouped bars comparing action-type probabilities across players.
+  - `situation_<player_id>_s<N>_direction.png` — angle-bin (direction) probabilities across players.
+- **PCA plots**:
+  - **Global** (all players, same 2D coordinates):  
+    `embeddings_pca.png` (coloured by position **group**: GK / Defender / Midfielder / Forward),  
+    `embeddings_pca_subgroup.png` (coloured by **subgroup**: e.g. Center Back, Full Back, Defensive Mid, Central Mid, Wide Mid, Forward, etc.),  
+    `embeddings_pca_position.png` (coloured by full **position** name, all 26+).
+  - **Per-query neighbourhood**: `pca_neighbourhood_<player_id>.png` — same 2D space with query and top-k neighbours highlighted and labelled.
+
+Subgroups are defined in `src/config.py` via `POSITION_SUBGROUPS` (mapping from each position name to one of ~8 categories).
 
 ---
 
@@ -29,23 +52,19 @@ Artifacts are written under `embeddings/analysis/` (e.g. `report_<player_id>.txt
 |-----------|----------|
 | Report orchestration | `src/phase7_analysis/report_builder.py` |
 | Counterfactual action prediction (FiLM + heads) | `src/phase7_analysis/situation_comparison.py` |
-| Embedding PCA visualisation | `src/phase7_analysis/embedding_viz.py` |
-| CLI entry | `main.py` → `--mode analyze` (often with player_id or config) |
+| Embedding PCA visualisation (group, subgroup, position, neighbourhood) | `src/phase7_analysis/embedding_viz.py` |
+| CLI entry | `main.py` → `--mode analyze` |
 
 ---
 
 ## How to run
-
-Typically:
 
 ```bash
 cd GNN_StatsBomb
 python main.py --mode analyze
 ```
 
-(Exact CLI may take a player_id or config for which player to report on; see `main.py` and `report_builder.py`.)
-
-Requires Phase 6 outputs (embeddings, player_info) and a trained checkpoint; reads possession graphs for h_event and event sampling.
+Requires Phase 6 outputs (embeddings, player_info) and a trained checkpoint; reads possession graphs and event features for h_event and event sampling. Query players are chosen at random (or via config); see `ReportConfig` to fix specific player IDs.
 
 ---
 
