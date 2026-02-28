@@ -1,3 +1,9 @@
+## Important notice
+
+Current this is a copy of Sean code
+
+Code remains for future references
+
 # GNN StatsBomb Player Similarity
 
 Player similarity from **StatsBomb 360** data: event stream plus **spatial context** (freeze frames) so that each event is encoded with where teammates and opponents were at that moment.
@@ -12,6 +18,7 @@ This pipeline uses **StatsBomb 360** (not only the regular event stream):
 - **StatsBomb 360** adds, for selected events, a **freeze frame**: positions of other players (teammates, opponents, keeper) at that moment.
 
 We use 360 so that player similarity can reflect **spatial context** (e.g. pressure, passing options, defensive density). Only matches that have a `three-sixty/{match_id}.json` file are loaded, and only events that have a 360 frame are kept. In the open dataset this is about **326 matches** and ~**1M frames**.
+
 
 ## Setup
 
