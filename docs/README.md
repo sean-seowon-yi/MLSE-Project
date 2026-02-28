@@ -1,40 +1,30 @@
 # Project Documentation
 
 This folder contains high-level documentation shared across the project.  
-More detailed, pipeline-specific docs live inside each GNN subfolder.
+Pipeline-specific docs live inside each GNN subfolder.
 
 ---
 
-## Top-level docs
+## Contents of this folder
 
-- `data.md`  
-  Overview of:
-  - **SkillCorner** tracking data (formats, coordinate system, sampling).  
-  - **StatsBomb** & **StatsBomb 360** event data (JSON layout, key fields).  
-  - How these sources are used in the two GNN pipelines.
+| Document | Description |
+|----------|-------------|
+| [data.md](data.md) | **SkillCorner** and **StatsBomb** data overview: formats, directory layout, coordinate systems, key fields, and how each source is used in the GNN pipelines. |
+
+**Data not in the repo.** SkillCorner and StatsBomb datasets must be obtained and placed under `SkillCorner/` and `StatsBomb/data/` respectively. See the root [README.md](../README.md) and [data.md](data.md) for details.
 
 ---
 
 ## Pipeline-specific docs
 
-For detailed, up-to-date design documents, see:
-
 - **SkillCorner pipeline** (`GNN_SkillCorner/`)
-  - `GNN_SkillCorner/docs/PIPELINE_DETAILS.md`  
-    - Phases from raw tracking to player embeddings.  
-    - Graph construction, GATv2 autoencoder, training regime, and validation.
+  - [GNN_SkillCorner/docs/PIPELINE_DETAILS.md](../GNN_SkillCorner/docs/PIPELINE_DETAILS.md) — Phases from raw tracking to player embeddings; graph construction, GATv2 autoencoder, training, and validation.
 
 - **StatsBomb 360 pipeline** (`GNN_StatsBomb/`)
-  - `GNN_StatsBomb/SYSTEM_DESIGN.md`  
-    - End-to-end system design for situation-aware player similarity.  
-    - Dataset choices, 122‑D encoding, possession & graph construction, model, losses, and Phase 7 analysis.  
-  - `GNN_StatsBomb/docs/DATA_QUALITY.md`  
-    - Data quality checks, missing data handling, edge cases, and soccer-specific assumptions.  
-  - `GNN_StatsBomb/docs/PHASE1.md`  
-    - Detailed description of Phase 1 encoding (feature groups, indices, normalisation, use of 360).
+  - [GNN_StatsBomb/SYSTEM_DESIGN.md](../GNN_StatsBomb/SYSTEM_DESIGN.md) — End-to-end system design: 126‑D encoding, possession & graph construction, model, losses, Phase 7 analysis.
+  - [GNN_StatsBomb/docs/README.md](../GNN_StatsBomb/docs/README.md) — Index of all phase docs (PHASE1–PHASE7) and related references.
+  - [GNN_StatsBomb/docs/DATA_QUALITY.md](../GNN_StatsBomb/docs/DATA_QUALITY.md) — Data quality, missing data, edge cases.
+  - [GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md](../GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md) — SOTA assessment, critical vulnerabilities & blind spots, improvement roadmap.
 
-These documents, together with the root `README.md`, give a complete picture of:
-
-- What the system is trying to achieve (player similarity by behaviour in context), and  
-- How each phase in each pipeline is implemented to support that goal.
+Together with the root [README.md](../README.md), these give a complete picture of what the system does (player similarity by behaviour in context) and how each phase is implemented.
 
