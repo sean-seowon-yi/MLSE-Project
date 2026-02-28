@@ -2,12 +2,13 @@
 Phase 7 – Embedding-space visualisations.
 
 Provides:
-  - Global PCA scatter (coloured by position group).
+  - Global PCA scatter in three variants: by position group (4), by subgroup (~8),
+    and by full position (all 26+).
   - Per-query neighbourhood view (query + neighbours highlighted).
 """
 
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -15,7 +16,7 @@ from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from ..config import POSITION_GROUPS
+from ..config import POSITION_GROUPS, POSITION_SUBGROUPS
 
 
 _POS_TO_GROUP: Dict[str, str] = {}
@@ -37,44 +38,106 @@ def compute_pca_coords(
     return {int(pid_array[i]): coords[i] for i in range(len(pid_array))}
 
 
-def plot_pca_global(
+def _build_pca_df(
     Z: np.ndarray,
     player_info: pd.DataFrame,
-    output_dir: Path,
-    pid_to_coord: Dict[int, np.ndarray] = None,
-) -> None:
-    """2-D PCA scatter of all players, coloured by position group.
-
-    If *pid_to_coord* is provided (from ``compute_pca_coords``), reuses
-    those coordinates instead of refitting PCA.
-    """
-    output_dir.mkdir(parents=True, exist_ok=True)
+    pid_to_coord: Optional[Dict[int, np.ndarray]] = None,
+) -> pd.DataFrame:
+    """Build 2D PCA coords and add group/subgroup/position columns. Returns empty df if no data."""
     if Z.shape[0] == 0:
-        return
-
+        return pd.DataFrame()
     if pid_to_coord is not None and len(pid_to_coord) == Z.shape[0]:
         pids = player_info["player_id"].to_numpy()
         Z_2d = np.stack([pid_to_coord[int(p)] for p in pids], axis=0)
     else:
         pca = PCA(n_components=2, random_state=0)
         Z_2d = pca.fit_transform(Z)
-
+    position_names = player_info["position_name"].values
     df = pd.DataFrame({
         "x": Z_2d[:, 0],
         "y": Z_2d[:, 1],
-        "position_name": player_info["position_name"].values,
+        "position_name": position_names,
     })
     df["group"] = df["position_name"].map(lambda p: _POS_TO_GROUP.get(p, "Other"))
+    df["subgroup"] = df["position_name"].map(lambda p: POSITION_SUBGROUPS.get(p, "Unknown"))
+    return df
 
-    plt.figure(figsize=(8, 6))
-    sns.scatterplot(data=df, x="x", y="y", hue="group", alpha=0.7, s=20, palette="tab10")
-    plt.title("Player embeddings (PCA)")
+
+def _save_pca_scatter(
+    df: pd.DataFrame,
+    hue_col: str,
+    title: str,
+    legend_title: str,
+    output_path: Path,
+    palette: Optional[List] = None,
+) -> None:
+    """Single PCA scatter: same layout and dpi for all variants."""
+    if df.empty or hue_col not in df.columns:
+        return
+    figsize = (10, 6) if df[hue_col].nunique() > 12 else (8, 6)
+    plt.figure(figsize=figsize)
+    sns.scatterplot(data=df, x="x", y="y", hue=hue_col, alpha=0.7, s=20, palette=palette)
+    plt.title(title)
     plt.xlabel("PC1")
     plt.ylabel("PC2")
-    plt.legend(title="Position group", bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.legend(title=legend_title, bbox_to_anchor=(1.05, 1), loc="upper left", fontsize=7)
     plt.tight_layout()
-    plt.savefig(output_dir / "embeddings_pca.png", dpi=200)
+    plt.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close()
+
+
+def plot_pca_global(
+    Z: np.ndarray,
+    player_info: pd.DataFrame,
+    output_dir: Path,
+    pid_to_coord: Optional[Dict[int, np.ndarray]] = None,
+) -> None:
+    """2-D PCA scatter of all players in three variants: group, subgroup, and full position.
+
+    Produces:
+      - embeddings_pca.png          — coloured by position group (4 categories).
+      - embeddings_pca_subgroup.png — coloured by subgroup (~8 categories).
+      - embeddings_pca_position.png — coloured by full position name (all 26+).
+
+    If *pid_to_coord* is provided (from ``compute_pca_coords``), reuses
+    those coordinates instead of refitting PCA so all three plots share the same 2D layout.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    df = _build_pca_df(Z, player_info, pid_to_coord)
+    if df.empty:
+        return
+
+    # 1) Coarse: 4 groups (existing behaviour)
+    _save_pca_scatter(
+        df,
+        hue_col="group",
+        title="Player embeddings (PCA) — position group",
+        legend_title="Position group",
+        output_path=output_dir / "embeddings_pca.png",
+        palette="tab10",
+    )
+
+    # 2) Medium: subgroups
+    _save_pca_scatter(
+        df,
+        hue_col="subgroup",
+        title="Player embeddings (PCA) — subgroup",
+        legend_title="Subgroup",
+        output_path=output_dir / "embeddings_pca_subgroup.png",
+        palette="tab10",
+    )
+
+    # 3) Fine: all positions (need palette with enough colours)
+    n_pos = df["position_name"].nunique()
+    palette_pos = sns.color_palette("husl", n_colors=n_pos) if n_pos > 10 else "tab10"
+    _save_pca_scatter(
+        df,
+        hue_col="position_name",
+        title="Player embeddings (PCA) — position",
+        legend_title="Position",
+        output_path=output_dir / "embeddings_pca_position.png",
+        palette=palette_pos,
+    )
 
 
 def plot_pca_neighbourhood(

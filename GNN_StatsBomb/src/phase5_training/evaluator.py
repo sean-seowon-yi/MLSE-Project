@@ -217,7 +217,7 @@ def plot_outcome_roc(
     out_path: Path,
 ) -> None:
     """Plot ROC curves for ends_in_shot and ends_in_goal."""
-    from sklearn.metrics import roc_curve
+    from sklearn.metrics import roc_auc_score, roc_curve
 
     import matplotlib.pyplot as plt
 
@@ -228,7 +228,7 @@ def plot_outcome_roc(
         if np.unique(y_true).size < 2:
             continue
         fpr, tpr, _ = roc_curve(y_true, y_score)
-        auc = np.trapz(tpr, fpr)
+        auc = float(roc_auc_score(y_true, y_score))
         ax.plot(fpr, tpr, label=f"{name} (AUC = {auc:.3f})")
     ax.plot([0, 1], [0, 1], "k--", alpha=0.5)
     ax.set_xlabel("False Positive Rate")

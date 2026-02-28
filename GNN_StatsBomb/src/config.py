@@ -169,6 +169,37 @@ POSITION_GROUPS = {
     ],
 }
 
+# Finer-grained subgroups (between 4 groups and 26 positions) for PCA and viz.
+# Each position name maps to one subgroup; used for embeddings_pca_subgroup.png.
+POSITION_SUBGROUPS: Dict[str, str] = {
+    "Goalkeeper": "Goalkeeper",
+    "Center Back": "Center Back",
+    "Left Center Back": "Center Back",
+    "Right Center Back": "Center Back",
+    "Left Back": "Full Back",
+    "Right Back": "Full Back",
+    "Left Wing Back": "Full Back",
+    "Right Wing Back": "Full Back",
+    "Center Defensive Midfield": "Defensive Mid",
+    "Left Defensive Midfield": "Defensive Mid",
+    "Right Defensive Midfield": "Defensive Mid",
+    "Center Midfield": "Central Mid",
+    "Center Attacking Midfield": "Central Mid",
+    "Left Center Midfield": "Central Mid",
+    "Right Center Midfield": "Central Mid",
+    "Left Midfield": "Wide Mid",
+    "Right Midfield": "Wide Mid",
+    "Left Attacking Midfield": "Wide Mid",
+    "Right Attacking Midfield": "Wide Mid",
+    "Center Forward": "Forward",
+    "Left Center Forward": "Forward",
+    "Right Center Forward": "Forward",
+    "Left Wing": "Forward",
+    "Right Wing": "Forward",
+    "Secondary Striker": "Forward",
+    "Unknown": "Unknown",
+}
+
 # Map each position index to a coarse group index (for hard-negative contrastive loss).
 # Groups: 0=Goalkeeper, 1=Defender, 2=Midfielder, 3=Forward, 4=Unknown
 _POS_NAME_TO_GROUP_IDX: Dict[str, int] = {}
