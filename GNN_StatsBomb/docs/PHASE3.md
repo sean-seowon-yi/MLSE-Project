@@ -8,7 +8,7 @@ Phase 3 converts each possession into a **heterogeneous graph** (`HeteroData`) t
 
 - One **event** node per on-ball action in the possession (features: 126-D with Spatial_360 block **zeroed**).
 - One **player** node per distinct actor or off-ball (360) player; features include position (or Unknown for off-ball), team flag, and spatial offset (dx, dy) from the ball.
-- **Edges**: temporal (`next`/`prev` with time-delta attribute), actor-event (`acts_in`/`performed_by`), and context (`context_for` from 360).
+- **Edges**: temporal (`next`/`prev` with time-delta attribute), actor-event (`acts_in`/`performed_by`), and 360 context (`context_for` by default; optionally split into `context_for_tm` / `context_for_opp` via `--split_context_edges`).
 - Output a list of `HeteroData` graphs for training and inference.
 
 ---
@@ -19,7 +19,7 @@ Phase 3 converts each possession into a **heterogeneous graph** (`HeteroData`) t
 |--------|-------------|
 | **possessions.pkl** | From Phase 2: list of `Possession` (event indices, timestamps_sec, labels). |
 | **event_features.npy** | From Phase 1: (N × 126) event feature matrix. |
-| **freeze_frames.pkl** | From Phase 1: list of freeze-frame lists, aligned by event index (for 360 context_for edges). |
+| **freeze_frames.pkl** | From Phase 1: list of freeze-frame lists, aligned by event index (for 360 context edges). |
 
 ---
 
@@ -27,7 +27,7 @@ Phase 3 converts each possession into a **heterogeneous graph** (`HeteroData`) t
 
 | File | Content |
 |------|--------|
-| **possession_graphs.pkl** | List of `HeteroData` objects, one per possession. |
+| **possession_graphs.pkl** (or `possession_graphs_{tag}.pkl` with `--tag`) | List of `HeteroData` objects, one per possession. |
 
 ---
 
@@ -48,7 +48,11 @@ Phase 3 converts each possession into a **heterogeneous graph** (`HeteroData`) t
 | (event, **prev**, event) | 1-D time delta | Event t+1 → event t (reverse temporal). |
 | (player, **acts_in**, event) | — | This player performed this event. |
 | (event, **performed_by**, player) | — | Reverse of acts_in. |
-| (player, **context_for**, event) | — | Off-ball player visible in 360 at this event. |
+| (player, **context_for**, event) | — | Off-ball player visible in 360 at this event. **Default** when `split_context_edges=False`. |
+| (player, **context_for_tm**, event) | — | **Teammate** off-ball player (passing options, support). Used when `--split_context_edges` is set. |
+| (player, **context_for_opp**, event) | — | **Opponent** off-ball player (defensive pressure, blocks). Used when `--split_context_edges` is set. |
+
+> **Ablation:** Pass `--split_context_edges` to split the single `context_for` edge into `context_for_tm` and `context_for_opp`. The default (`False`) preserves backward compatibility with existing checkpoints.
 
 **Time-delta**: `min(Δt / 30, 1.0)` per edge, so the GNN gets tempo (e.g. quick counter vs slow buildup).
 
@@ -56,7 +60,7 @@ Phase 3 converts each possession into a **heterogeneous graph** (`HeteroData`) t
 
 ## Masking (Phase 3)
 
-- **Spatial_360 zeroed** in event node features so the model learns spatial context from explicit player nodes and `context_for` edges, not from the 9-D summary in the event vector.
+- **Spatial_360 zeroed** in event node features so the model learns spatial context from explicit player nodes and context edges, not from the 9-D summary in the event vector.
 - Future-info and position masking are applied **at runtime** in Phase 5 (training) and Phase 6 (inference), not in the stored graphs.
 
 ---

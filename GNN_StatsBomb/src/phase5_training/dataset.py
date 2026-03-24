@@ -11,6 +11,7 @@ Key responsibilities:
 """
 
 import random
+from collections import defaultdict
 from typing import Dict, List, Tuple, Optional
 
 import numpy as np
@@ -45,6 +46,19 @@ class PossessionGraphDataset(Dataset):
 
     def __len__(self) -> int:
         return len(self.graphs)
+
+    def build_player_index(self) -> Dict[int, List[int]]:
+        """Map each actor player_id to the dataset indices where they appear.
+
+        Used by :class:`PlayerAwareBatchSampler` to construct batches with
+        guaranteed same-player positive pairs for the contrastive loss.
+        """
+        pid_to_indices: Dict[int, set] = defaultdict(set)
+        for idx, g in enumerate(self.graphs):
+            for pid in g.event_player_ids.tolist():
+                if pid >= 0:
+                    pid_to_indices[pid].add(idx)
+        return {pid: sorted(idxs) for pid, idxs in pid_to_indices.items()}
 
     def __getitem__(self, idx: int) -> Dict:
         g = self.graphs[idx]

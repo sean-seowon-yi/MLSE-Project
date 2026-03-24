@@ -91,7 +91,7 @@ Left and right positions are kept distinct (not mirrored) so that preferred foot
 - **Why fixed-length vectors over learned tokenisation**: Each event mixes categorical fields (event type, position) with continuous fields (coordinates, xG) and structural fields (360 counts). A fixed encoding makes the feature space transparent and debuggable — we can inspect exactly which dimensions correspond to which information and mask specific groups during training.
 - **Why coordinates are normalised to [0, 1]**: StatsBomb already standardises pitch orientation (acting team always attacks left-to-right), so raw coordinates are directly comparable across events. Dividing by pitch dimensions (120 × 80) brings all spatial features onto the same scale as the binary/one-hot features.
 - **Why left/right positions are kept distinct**: A Left Wing and a Right Wing make systematically different decisions (preferred foot, cut-inside vs. go-wide, crossing angle). Mirroring would merge these into one role, destroying signal the model needs for per-player behavioural differentiation.
-- **Why Spatial_360 is included in the event vector (then zeroed for the GNN)**: The 9-dim summary (counts and distances) is useful for non-GNN consumers of the feature matrix. For the GNN, these summary stats are redundant with the explicit player nodes and `context_for` edges — zeroing them forces the GNN to learn spatial reasoning from the graph structure rather than leaking aggregate statistics through the event features.
+- **Why Spatial_360 is included in the event vector (then zeroed for the GNN)**: The 9-dim summary (counts and distances) is useful for non-GNN consumers of the feature matrix. For the GNN, these summary stats are redundant with the explicit player nodes and `context_for_tm` / `context_for_opp` edges — zeroing them forces the GNN to learn spatial reasoning from the graph structure rather than leaking aggregate statistics through the event features.
 
 ---
 
@@ -139,17 +139,21 @@ Each possession also stores per-event timestamps with millisecond precision (par
 | `(event, prev, event)` | 1-D time delta | Reverse temporal: event t+1 → event t |
 | `(player, acts_in, event)` | — | Actor performed this event |
 | `(event, performed_by, player)` | — | Reverse of acts_in |
-| `(player, context_for, event)` | — | Off-ball player visible during this event (from 360 data) |
+| `(player, context_for, event)` | — | Off-ball player visible during this event (from 360 data). **Default** edge type when `split_context_edges=False`. |
+| `(player, context_for_tm, event)` | — | **Teammate** off-ball player (passing options, support runs). Used when `--split_context_edges` is set. |
+| `(player, context_for_opp, event)` | — | **Opponent** off-ball player (defensive pressure, blocks). Used when `--split_context_edges` is set. |
+
+> **Ablation flag** (`GraphConfig.split_context_edges`, default `False`): When set to `True` via `--split_context_edges`, the single `context_for` relation is split into `context_for_tm` and `context_for_opp`, giving `HeteroConv` separate projection/attention weights for offensive options vs defensive pressure. The default (`False`) preserves backward compatibility with existing checkpoints.
 
 **Temporal edge attributes**: Each `next` and `prev` edge carries a 1-D time-delta attribute representing the elapsed time between the two connected events, normalised as `min(Δt / 30, 1.0)`. This gives the GNN tempo information: a rapid pass-carry sequence (0.5s gaps) produces edge attributes near 0, while a slow buildup (15s gaps) produces attributes near 0.5, and filtered-out intermediate events (30s+ gaps) saturate at 1.0.
 
-The 360 freeze frames are critical: they create `context_for` edges that tell the GNN about teammate and opponent positioning. This is the spatial context that makes a "situation" well-defined.
+The 360 freeze frames are critical: they create context edges that tell the GNN about off-ball player positioning. When `--split_context_edges` is used, these are split into `context_for_tm` (teammate) and `context_for_opp` (opponent), allowing `HeteroConv` to learn separate projection matrices and attention weights for offensive options vs defensive pressure, rather than forcing the attention mechanism to distinguish teams using only the `is_possession_team` node feature. This is the spatial context that makes a "situation" well-defined.
 
-**Output**: `possession_graphs.pkl` — list of `HeteroData` objects.
+**Output**: `possession_graphs.pkl` (or `possession_graphs_{tag}.pkl` when `--tag` is used) — list of `HeteroData` objects.
 
 ### Data Processing Reasoning
 
-- **Why heterogeneous graphs (not sequences)**: A possession is more than a sequence of events. Each event involves an actor, and that event occurs in the context of where all other players are standing. A flat sequence model (LSTM, Transformer over events) would need the 360 spatial context injected as auxiliary features on each event — losing the explicit structure of "player X is 5 metres to the left." A heterogeneous graph natively encodes: temporal ordering (event → event edges), who did what (player ↔ event edges), and who was where (context player → event edges). The GNN can then reason about all of these simultaneously.
+- **Why heterogeneous graphs (not sequences)**: A possession is more than a sequence of events. Each event involves an actor, and that event occurs in the context of where all other players are standing. A flat sequence model (LSTM, Transformer over events) would need the 360 spatial context injected as auxiliary features on each event — losing the explicit structure of "player X is 5 metres to the left." A heterogeneous graph natively encodes: temporal ordering (event → event edges), who did what (player ↔ event edges), and who was where (teammate / opponent context → event edges). The GNN can then reason about all of these simultaneously.
 - **Why separate node types for events and players**: Events and players are fundamentally different entities. An event has 126 features describing what happened; a player node has 4 features describing who they are and where they stand. Heterogeneous typing lets the model learn separate projection and attention parameters for each, rather than forcing both into a single feature space.
 - **Why off-ball players get `Unknown` position**: Off-ball players from 360 freeze frames don't carry position labels in the StatsBomb data — only the actor's position is known. Rather than guessing or omitting them, they receive the `Unknown` position embedding (learned from data), and their spatial offset (dx, dy) from the ball carries the crucial information about where they are.
 - **Why actor players get dx=0, dy=0**: The actor is at the ball by definition. Their spatial information is already encoded in the event node's location. The actor node's value comes from the position embedding and team flag, not spatial offset.
@@ -547,6 +551,29 @@ The following issues were identified during a full code audit and corrected:
 **Addition (pooled uniformity):** To directly widen cosine similarity gaps in the space used for search, a **Gaussian-potential uniformity loss** was added on **pooled `z_p`** (all pairs in the batch pushed apart on the unit hypersphere). Weight `lambda_pooled_contrast = 0.3`. Contrastive weight reduced to `lambda_contrast = 0.5` (configurable). Validation uses the full loss including both terms.
 
 **Dual-channel position:** Position continues to enter `z_p` through the player-node path (PlayerProjection → GNN → h_player → pool). The separate FiLM position embedding (audit #10) is retained. This keeps coarse role structure (e.g. GK separate) while the uniformity loss prevents embedding collapse.
+
+### 13. Split context edges: teammate vs opponent
+
+**Problem:** Phase 3 used a single edge type `(player, context_for, event)` for all 360 spatial context players. A teammate 3m ahead represents a passing option; an opponent 3m ahead represents a block. With one edge type, the GNN must rely only on the player node's `is_possession_team` feature (a single scalar) to distinguish them, forcing the attention mechanism to work harder to learn the fundamentally different roles of teammates vs opponents in the spatial context.
+
+**Fix:** Split into two edge types:
+- `(player, context_for_tm, event)` — teammate context (offensive options, support runs)
+- `(player, context_for_opp, event)` — opponent context (defensive pressure, blocking threats)
+
+`HeteroConv` now learns separate projection matrices and attention weights for each, letting the model naturally treat offensive and defensive spatial information differently. The routing is determined by the `is_possession_team` flag (already correctly derived in the graph builder, accounting for the XOR between StatsBomb's actor-relative `teammate` field and whether the actor is on the possession team).
+
+**Ablation support:** `GraphConfig.split_context_edges` (default `False` for backward compatibility). Enable via `--split_context_edges` CLI flag for new experiments. Setting to `True` activates the split; `False` retains the original single `context_for` edge type. The GNN encoder's `get_edge_types()` function returns the appropriate relation list based on this flag.
+
+**Changes:**
+- `config.py`: Added `split_context_edges: bool = False` to `GraphConfig` (default `False` for backward compat). Added `validate_graph_config_match()` to catch graph/config mismatches at load time.
+- `graph_builder.py`: Routes freeze-frame context edges into `ctx_tm_src/dst` or `ctx_opp_src/dst` when `split_context_edges=True`; writes two separate relation types to `HeteroData`.
+- `gnn_encoder.py`: `ALL_EDGE_TYPES` replaced by `get_edge_types(split_context)`, computed at init from `GraphConfig`. Each `GATv2Conv` layer allocates separate parameters per context relation.
+- `model.py`: `PlayerSimilarityModel.__init__` accepts optional `graph_config` and forwards it to the GNN encoder.
+- `main.py` + `report_builder.py`: All model instantiation sites pass `graph_config=config.graph`. All graph load sites call `validate_graph_config_match()`.
+
+**Note**: When `--split_context_edges` is used, this is an architectural change — existing checkpoints are incompatible and the full pipeline (Phase 3 → Phase 5) must be re-run with the flag. Graphs built with a different edge schema will be caught at load time by `validate_graph_config_match()`, which raises `ValueError` on mismatch.
+
+**Ablation workflow** (`--tag` + `--split_context_edges`): Use `python main.py --mode build_graphs --tag split_ctx --split_context_edges` (then `train`, `evaluate`, etc. with the same flags). The tag namespaces Phase 3+ outputs (`possession_graphs_{tag}.pkl`, `checkpoints/{tag}/`, `embeddings/{tag}/`) while sharing Phase 1–2 data. The baseline run (no tag, no flag) is never overwritten.
 
 ---
 

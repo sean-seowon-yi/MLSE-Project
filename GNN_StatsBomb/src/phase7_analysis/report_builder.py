@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from ..config import Config, POSITION_GROUPS
+from ..config import Config, POSITION_GROUPS, validate_graph_config_match
 from ..phase3_graph import PossessionGraphBuilder
 from ..phase3_graph.masking import mask_future_info
 from ..phase4_model import PlayerSimilarityModel
@@ -73,7 +73,7 @@ class ReportBuilder:
         return np.load(out_dir / "event_features.npy")
 
     def _load_model(self, device: torch.device) -> PlayerSimilarityModel:
-        model = PlayerSimilarityModel(self.config.model)
+        model = PlayerSimilarityModel(self.config.model, graph_config=self.config.graph)
         ckpt_path = Path(self.config.training.checkpoint_dir) / "best_model.pt"
         ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
         model.load_state_dict(ckpt["model_state_dict"])
@@ -83,7 +83,9 @@ class ReportBuilder:
 
     def _load_graphs(self) -> List:
         out_dir = Path(self.config.data.output_dir)
-        return PossessionGraphBuilder.load(str(out_dir / "possession_graphs.pkl"))
+        graphs = PossessionGraphBuilder.load(str(out_dir / self.config.graphs_filename))
+        validate_graph_config_match(graphs, self.config.graph.split_context_edges)
+        return graphs
 
     # ── query selection ───────────────────────────────────────────
 
@@ -239,8 +241,8 @@ class ReportBuilder:
             device = torch.device("cuda")
         else:
             device = torch.device("cpu")
-        model = self._load_model(device)
         graphs = self._load_graphs()
+        model = self._load_model(device)
 
         print("Setting up situation comparator …")
         comparator = SituationComparator(

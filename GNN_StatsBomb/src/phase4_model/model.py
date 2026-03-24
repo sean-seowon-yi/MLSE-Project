@@ -26,7 +26,7 @@ from torch_geometric.data import HeteroData
 from torch_geometric.utils import scatter
 from typing import Dict, List, Optional, Tuple
 
-from ..config import ModelConfig, POSITION_IDX_TO_GROUP
+from ..config import GraphConfig, ModelConfig, POSITION_IDX_TO_GROUP
 from .projections import EventProjection, PlayerProjection
 from .gnn_encoder import PossessionGNNEncoder
 from .pooling import AttentionPooling
@@ -37,7 +37,7 @@ _POS_TO_GROUP_T = torch.tensor(POSITION_IDX_TO_GROUP, dtype=torch.long)
 
 class PlayerSimilarityModel(nn.Module):
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: ModelConfig, graph_config: Optional[GraphConfig] = None):
         super().__init__()
         self.config = config
         d = config.latent_dim
@@ -45,7 +45,7 @@ class PlayerSimilarityModel(nn.Module):
 
         self.event_proj = EventProjection(config)
         self.player_proj = PlayerProjection(config)
-        self.gnn = PossessionGNNEncoder(config)
+        self.gnn = PossessionGNNEncoder(config, graph_config=graph_config)
         self.pooling = AttentionPooling(d)
 
         # Separate position embedding for FiLM conditioning.  Position

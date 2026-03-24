@@ -6,6 +6,7 @@ Vocabularies are derived from a 20-match survey of the StatsBomb open data.
 """
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 import os
 
@@ -277,10 +278,16 @@ class GraphConfig:
     position_embed_dim: int = 16
 
     use_reverse_temporal: bool = True
-    # Relation triplets enabled by default:
-    #   ("event","next","event"), ("event","prev","event"),
-    #   ("player","acts_in","event"), ("event","performed_by","player"),
-    #   ("player","context_for","event")
+
+    # When True, 360 context edges are split into two relation types:
+    #   ("player", "context_for_tm",  "event")  — teammate context
+    #   ("player", "context_for_opp", "event")  — opponent context
+    # This gives HeteroConv separate projection/attention weights for
+    # offensive options vs defensive pressure.
+    # Default False preserves backward compatibility with existing
+    # checkpoints trained on a single "context_for" edge.  Enable via
+    # --split_context_edges CLI flag for new experiments.
+    split_context_edges: bool = False
 
 
 @dataclass
@@ -326,6 +333,10 @@ class TrainingConfig:
     val_ratio: float = 0.15
     test_ratio: float = 0.15
 
+    player_sampling: bool = False
+    players_per_batch: int = 16
+    possessions_per_player: int = 6
+
 
 @dataclass
 class InferenceConfig:
@@ -349,8 +360,61 @@ class Config:
     training: TrainingConfig = field(default_factory=TrainingConfig)
     inference: InferenceConfig = field(default_factory=InferenceConfig)
 
+    tag: str = ""
+
     def __post_init__(self):
         os.makedirs(self.data.output_dir, exist_ok=True)
+
+    def apply_tag(self, tag: str) -> None:
+        """Namespace Phase 3+ outputs under *tag*, leaving Phase 1-2 shared.
+
+        With no tag the default paths are unchanged, preserving any
+        existing baseline run.  When a tag is provided:
+          - Graphs file becomes ``possession_graphs_{tag}.pkl``
+          - Checkpoints  → ``checkpoints/{tag}/``
+          - Embeddings   → ``embeddings/{tag}/``
+        """
+        if not tag:
+            return
+        self.tag = tag
+        self.training.checkpoint_dir = str(
+            Path(self.training.checkpoint_dir) / tag
+        )
+        self.inference.embedding_output_dir = str(
+            Path(self.inference.embedding_output_dir) / tag
+        )
+
+    @property
+    def graphs_filename(self) -> str:
+        """Tag-aware filename for possession graphs inside ``data.output_dir``."""
+        if self.tag:
+            return f"possession_graphs_{self.tag}.pkl"
+        return "possession_graphs.pkl"
+
+
+def validate_graph_config_match(graphs, split_context_edges: bool) -> None:
+    """Check that loaded graphs match the active split_context_edges setting.
+
+    Raises ValueError on mismatch to prevent silent loss of context edges.
+    """
+    if not graphs:
+        return
+    sample_rels = {et[1] for et in graphs[0].edge_types}
+    graph_is_split = "context_for_tm" in sample_rels or "context_for_opp" in sample_rels
+    graph_is_unified = "context_for" in sample_rels
+
+    if split_context_edges and not graph_is_split and graph_is_unified:
+        raise ValueError(
+            "Graph/config mismatch: --split_context_edges is set but the "
+            "loaded graphs use a single 'context_for' edge.  Re-build "
+            "graphs with --split_context_edges, or drop the flag."
+        )
+    if not split_context_edges and graph_is_split and not graph_is_unified:
+        raise ValueError(
+            "Graph/config mismatch: loaded graphs use split context edges "
+            "(context_for_tm / context_for_opp) but --split_context_edges "
+            "is not set.  Pass --split_context_edges to match these graphs."
+        )
 
 
 def get_config() -> Config:

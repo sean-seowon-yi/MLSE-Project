@@ -12,11 +12,17 @@ Node types
 
 Edge types (relation triplets)
 ──────────────────────────────
-  ("event",  "next",         "event")   — temporal: e_t → e_{t+1}
-  ("event",  "prev",         "event")   — reverse temporal (optional)
-  ("player", "acts_in",      "event")   — actor → event
-  ("event",  "performed_by", "player")  — event → actor (reverse)
-  ("player", "context_for",  "event")   — off-ball 360 player → event
+  ("event",  "next",         "event")       — temporal: e_t → e_{t+1}
+  ("event",  "prev",         "event")       — reverse temporal (optional)
+  ("player", "acts_in",      "event")       — actor → event
+  ("event",  "performed_by", "player")      — event → actor (reverse)
+
+  When ``split_context_edges=False`` (default):
+  ("player", "context_for",  "event")       — all off-ball 360 players → event
+
+  When ``split_context_edges=True`` (via --split_context_edges):
+  ("player", "context_for_tm",  "event")    — teammate 360 player → event
+  ("player", "context_for_opp", "event")    — opponent 360 player → event
 """
 
 import logging
@@ -113,9 +119,15 @@ class PossessionGraphBuilder:
         actor_src: List[int] = []  # player indices
         actor_dst: List[int] = []  # event indices (local 0..T-1)
 
-        # Context edges
+        # Context edges — split or unified depending on config
         ctx_src: List[int] = []
         ctx_dst: List[int] = []
+        ctx_tm_src: List[int] = []
+        ctx_tm_dst: List[int] = []
+        ctx_opp_src: List[int] = []
+        ctx_opp_dst: List[int] = []
+
+        split_ctx = self.config.split_context_edges
 
         for local_ev_idx in range(T):
             global_idx = poss.event_indices[local_ev_idx]
@@ -153,7 +165,11 @@ class PossessionGraphBuilder:
                     poss.possession_team_id,
                     actor_on_poss_team,
                     player_key_to_idx, player_features,
-                    player_node_pids, ctx_src, ctx_dst,
+                    player_node_pids,
+                    ctx_src, ctx_dst,
+                    ctx_tm_src, ctx_tm_dst,
+                    ctx_opp_src, ctx_opp_dst,
+                    split_ctx,
                 )
 
         n_players = len(player_features)
@@ -197,8 +213,14 @@ class PossessionGraphBuilder:
             data["player", "acts_in", "event"].edge_index = self._to_edge_index(actor_src, actor_dst)
             data["event", "performed_by", "player"].edge_index = self._to_edge_index(actor_dst, actor_src)
 
-        if ctx_src:
-            data["player", "context_for", "event"].edge_index = self._to_edge_index(ctx_src, ctx_dst)
+        if split_ctx:
+            if ctx_tm_src:
+                data["player", "context_for_tm", "event"].edge_index = self._to_edge_index(ctx_tm_src, ctx_tm_dst)
+            if ctx_opp_src:
+                data["player", "context_for_opp", "event"].edge_index = self._to_edge_index(ctx_opp_src, ctx_opp_dst)
+        else:
+            if ctx_src:
+                data["player", "context_for", "event"].edge_index = self._to_edge_index(ctx_src, ctx_dst)
 
         # ── Metadata for downstream use ──────────────────────────────
         data.pos_key = poss.pos_key
@@ -229,6 +251,11 @@ class PossessionGraphBuilder:
         player_node_pids: List[int],
         ctx_src: List[int],
         ctx_dst: List[int],
+        ctx_tm_src: List[int],
+        ctx_tm_dst: List[int],
+        ctx_opp_src: List[int],
+        ctx_opp_dst: List[int],
+        split_ctx: bool,
     ) -> None:
         """Add off-ball player nodes and context edges from a single freeze frame."""
         teammate_counter = 0
@@ -258,6 +285,9 @@ class PossessionGraphBuilder:
             else:
                 team_flag = 0.0 if is_teammate else 1.0
 
+            # Resolve whether this context player is on the possession team
+            is_on_poss_team = (team_flag == 1.0)
+
             if is_teammate:
                 slot_key = ("tm", local_ev_idx, teammate_counter)
                 teammate_counter += 1
@@ -274,8 +304,16 @@ class PossessionGraphBuilder:
             player_features.append([float(_UNKNOWN_POS_IDX), team_flag, dx, dy])
             player_node_pids.append(-1)
 
-            ctx_src.append(p_idx)
-            ctx_dst.append(local_ev_idx)
+            if split_ctx:
+                if is_on_poss_team:
+                    ctx_tm_src.append(p_idx)
+                    ctx_tm_dst.append(local_ev_idx)
+                else:
+                    ctx_opp_src.append(p_idx)
+                    ctx_opp_dst.append(local_ev_idx)
+            else:
+                ctx_src.append(p_idx)
+                ctx_dst.append(local_ev_idx)
 
     @staticmethod
     def _to_edge_index(src: List[int], dst: List[int]) -> torch.Tensor:

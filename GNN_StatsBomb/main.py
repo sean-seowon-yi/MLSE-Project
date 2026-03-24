@@ -10,6 +10,8 @@ Modes
   evaluate           Evaluate best model on test set (metrics + plots).
   inference          Phase 6 — generate player embeddings from trained model.
   search             Phase 6 — find similar players to a query.
+  ground_truth       Evaluate pseudo ground-truth player pairs (rank check).
+  self_consistency   Intrinsic self-consistency test (cross-competition + random-half).
   full_pipeline      Run Phases 1→6A end-to-end (no search).
   analyze            Phase 7 — interpret embeddings and similarities.
 
@@ -22,8 +24,26 @@ Usage
   python main.py --mode evaluate
   python main.py --mode inference
   python main.py --mode search --player_id 5503
+  python main.py --mode ground_truth
+  python main.py --mode self_consistency
   python main.py --mode full_pipeline
   python main.py --mode analyze
+
+Experiment tagging (ablation)
+─────────────────────────────
+  python main.py --mode build_graphs --tag split_ctx --split_context_edges
+  python main.py --mode train --tag split_ctx --split_context_edges
+  python main.py --mode evaluate --tag split_ctx --split_context_edges
+
+  python main.py --mode train --player_sampling --tag player_samp
+  python main.py --mode train --split_context_edges --player_sampling --tag split_ctx_ps
+
+  --tag namespaces Phase 3+ outputs (graphs, checkpoints, embeddings)
+  while sharing Phase 1-2 data.  Omit --tag to use the default paths
+  (preserving the existing baseline run).
+  --split_context_edges must be passed consistently for every phase of
+  the same experiment (it changes graph structure and model architecture).
+  --player_sampling enables player-aware contrastive batching (training only).
 """
 
 import argparse
@@ -34,7 +54,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.config import get_config, Config
+from src.config import get_config, validate_graph_config_match, Config
 
 
 # ── Phase 1 ──────────────────────────────────────────────────────────────
@@ -198,7 +218,7 @@ def build_graphs(config: Config) -> None:
         print(f"  Sample graph — event nodes: {g['event'].x.shape[0]}, "
               f"player nodes: {g['player'].x.shape[0]}")
 
-    save_path = out_dir / "possession_graphs.pkl"
+    save_path = out_dir / config.graphs_filename
     PossessionGraphBuilder.save(graphs, str(save_path))
     print(f"\nSaved to {save_path}")
 
@@ -221,9 +241,10 @@ def train_model(config: Config) -> None:
 
     out_dir = Path(config.data.output_dir)
     features = np.load(out_dir / "event_features.npy")
-    graphs = PossessionGraphBuilder.load(str(out_dir / "possession_graphs.pkl"))
+    graphs = PossessionGraphBuilder.load(str(out_dir / config.graphs_filename))
+    validate_graph_config_match(graphs, config.graph.split_context_edges)
 
-    print(f"\nGraphs loaded: {len(graphs):,}")
+    print(f"\nGraphs loaded: {len(graphs):,}  ({config.graphs_filename})")
 
     train_g, val_g, test_g = train_val_test_split(
         graphs,
@@ -237,16 +258,35 @@ def train_model(config: Config) -> None:
     train_ds = PossessionGraphDataset(train_g, features, config.model)
     val_ds = PossessionGraphDataset(val_g, features, config.model)
 
-    train_loader = DataLoader(
-        train_ds, batch_size=config.training.batch_size,
-        shuffle=True, collate_fn=collate_fn, num_workers=0,
-    )
+    if config.training.player_sampling:
+        from src.phase5_training.sampler import PlayerAwareBatchSampler
+        player_index = train_ds.build_player_index()
+        sampler = PlayerAwareBatchSampler(
+            player_index=player_index,
+            players_per_batch=config.training.players_per_batch,
+            possessions_per_player=config.training.possessions_per_player,
+            total_possessions=len(train_ds),
+        )
+        train_loader = DataLoader(
+            train_ds, batch_sampler=sampler,
+            collate_fn=collate_fn, num_workers=0,
+        )
+        print(f"Player-aware sampling: K={config.training.players_per_batch}, "
+              f"M={config.training.possessions_per_player}, "
+              f"{len(player_index)} unique players, "
+              f"{len(sampler)} batches/epoch")
+    else:
+        train_loader = DataLoader(
+            train_ds, batch_size=config.training.batch_size,
+            shuffle=True, collate_fn=collate_fn, num_workers=0,
+        )
+
     val_loader = DataLoader(
         val_ds, batch_size=config.training.batch_size,
         shuffle=False, collate_fn=collate_fn, num_workers=0,
     )
 
-    model = PlayerSimilarityModel(config.model)
+    model = PlayerSimilarityModel(config.model, graph_config=config.graph)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"\nModel parameters: {n_params:,}")
 
@@ -284,7 +324,8 @@ def run_evaluate(config: Config) -> None:
 
     out_dir = Path(config.data.output_dir)
     features = np.load(out_dir / "event_features.npy")
-    graphs = PossessionGraphBuilder.load(str(out_dir / "possession_graphs.pkl"))
+    graphs = PossessionGraphBuilder.load(str(out_dir / config.graphs_filename))
+    validate_graph_config_match(graphs, config.graph.split_context_edges)
 
     train_g, val_g, test_g = train_val_test_split(
         graphs,
@@ -309,7 +350,7 @@ def run_evaluate(config: Config) -> None:
     else:
         device = torch.device("cpu")
 
-    model = PlayerSimilarityModel(config.model)
+    model = PlayerSimilarityModel(config.model, graph_config=config.graph)
     ckpt_path = Path(config.training.checkpoint_dir) / "best_model.pt"
     if not ckpt_path.exists():
         print(f"Checkpoint not found: {ckpt_path}")
@@ -346,7 +387,8 @@ def run_inference(config: Config, max_graphs: int | None = None) -> None:
     print("=" * 60)
 
     out_dir = Path(config.data.output_dir)
-    graphs = PossessionGraphBuilder.load(str(out_dir / "possession_graphs.pkl"))
+    graphs = PossessionGraphBuilder.load(str(out_dir / config.graphs_filename))
+    validate_graph_config_match(graphs, config.graph.split_context_edges)
     meta = pd.read_parquet(out_dir / "event_metadata.parquet")
 
     if max_graphs is not None and max_graphs < len(graphs):
@@ -358,7 +400,7 @@ def run_inference(config: Config, max_graphs: int | None = None) -> None:
     else:
         device = torch.device("cpu")
 
-    model = PlayerSimilarityModel(config.model)
+    model = PlayerSimilarityModel(config.model, graph_config=config.graph)
     ckpt_path = Path(config.training.checkpoint_dir) / "best_model.pt"
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model_state_dict"])
@@ -404,6 +446,143 @@ def search_similar(config: Config, player_id: int) -> None:
 
     print(f"\nTop-{config.inference.top_k} similar players:")
     print(results.to_string(index=False))
+
+
+# ── Ground-truth evaluation ───────────────────────────────────────────────
+
+def run_ground_truth(config: Config) -> None:
+    """Evaluate pseudo ground-truth player similarity pairs.
+
+    Loads Phase 6 embeddings, computes the rank at which each expected
+    partner appears in the query player's neighbour list, and writes a
+    detailed report + JSON to the embeddings directory.
+    """
+    from src.phase6_inference.ground_truth import evaluate_ground_truth, GROUND_TRUTH_PAIRS
+
+    print("\n" + "=" * 60)
+    print("PSEUDO GROUND-TRUTH EVALUATION")
+    print("=" * 60)
+
+    emb_dir = Path(config.inference.embedding_output_dir)
+    Z = np.load(emb_dir / "player_embeddings.npy")
+    player_info = pd.read_parquet(emb_dir / "player_info.parquet")
+
+    print(f"\nEmbeddings loaded: {Z.shape[0]} players, {Z.shape[1]}-D")
+    print(f"Ground-truth pairs defined: {len(GROUND_TRUTH_PAIRS)}")
+
+    result = evaluate_ground_truth(Z, player_info, output_dir=emb_dir)
+
+    summary = result["summary"]
+    n_eval = summary["n_evaluated"]
+    n_miss = summary["n_missing"]
+
+    print(f"\nPairs evaluated : {n_eval}")
+    print(f"Pairs skipped   : {n_miss} (player missing from embeddings)")
+
+    if n_eval > 0:
+        print(f"\n--- Per-pair results ---")
+        for p in result["pairs"]:
+            tier = f"[T{p['tier']}]"
+            if p["status"] == "MISSING":
+                print(f"  {tier} {p['player_a']} <-> {p['player_b']}  "
+                      f"SKIPPED (missing: {', '.join(p['missing'])})")
+            else:
+                r_ab = p["rank_b_in_a"]
+                r_ba = p["rank_a_in_b"]
+                cos = p["cosine_sim"]
+                print(f"  {tier} {p['player_a']:25s} <-> {p['player_b']:25s}  "
+                      f"cos={cos:.4f}  rank(A→B)={r_ab:>4d}  rank(B→A)={r_ba:>4d}")
+
+        print(f"\n--- Aggregate ---")
+        print(f"  Mean cosine  : {summary['mean_cosine']:.4f}")
+        print(f"  Mean rank    : {summary['mean_rank']:.1f}")
+        print(f"  Median rank  : {summary['median_rank']}")
+        print(f"  Hit@5        : {summary['hit_at_5']:.1%}")
+        print(f"  Hit@10       : {summary['hit_at_10']:.1%}")
+        print(f"  Hit@20       : {summary['hit_at_20']:.1%}")
+        print(f"  Hit@50       : {summary['hit_at_50']:.1%}")
+
+        for tier_key, ts in summary.get("by_tier", {}).items():
+            print(f"  {tier_key.replace('_', ' ').title():10s}: "
+                  f"mean_rank={ts['mean_rank']:.1f}  "
+                  f"hit@5={ts['hit_at_5']:.1%}  "
+                  f"hit@10={ts['hit_at_10']:.1%}  "
+                  f"hit@20={ts['hit_at_20']:.1%}")
+
+    print(f"\nReport saved to: {emb_dir / 'ground_truth_report.txt'}")
+    print(f"JSON saved to:   {emb_dir / 'ground_truth_results.json'}")
+
+
+# ── Self-consistency evaluation ──────────────────────────────────────────
+
+def run_self_consistency(config: Config) -> None:
+    """Intrinsic self-consistency test for player embeddings.
+
+    For players appearing in multiple competitions, split their
+    possession-level GNN embeddings by competition, pool each split
+    independently, and check if the player's own alternate-competition
+    embedding ranks highest.  Also runs a random-half stability test.
+    """
+    import torch
+    from src.phase3_graph import PossessionGraphBuilder
+    from src.phase4_model import PlayerSimilarityModel
+    from src.phase6_inference.self_consistency import SelfConsistencyEvaluator
+
+    print("\n" + "=" * 60)
+    print("SELF-CONSISTENCY EVALUATION")
+    print("=" * 60)
+
+    out_dir = Path(config.data.output_dir)
+    graphs = PossessionGraphBuilder.load(str(out_dir / config.graphs_filename))
+    validate_graph_config_match(graphs, config.graph.split_context_edges)
+    meta = pd.read_parquet(out_dir / "event_metadata.parquet")
+
+    print(f"\nGraphs loaded: {len(graphs):,}  ({config.graphs_filename})")
+    print(f"Metadata rows: {len(meta):,}")
+
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    model = PlayerSimilarityModel(config.model, graph_config=config.graph)
+    ckpt_path = Path(config.training.checkpoint_dir) / "best_model.pt"
+    if not ckpt_path.exists():
+        print(f"Checkpoint not found: {ckpt_path}")
+        print("Run --mode train first.")
+        return
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    model.load_state_dict(ckpt["model_state_dict"])
+
+    emb_dir = Path(config.inference.embedding_output_dir)
+
+    evaluator = SelfConsistencyEvaluator(
+        model=model,
+        device=device,
+        config=config.inference,
+        min_poss_per_split=config.inference.min_samples_per_player,
+    )
+    result = evaluator.run(graphs, meta, output_dir=emb_dir)
+
+    for test_key, test_label in [
+        ("competition_split", "Competition-split"),
+        ("random_half", "Random-half"),
+    ]:
+        data = result[test_key]
+        if "summary" not in data:
+            print(f"\n{test_label}: no testable players.")
+            continue
+        s = data["summary"]
+        print(f"\n--- {test_label} ({s['n_players']} players, gallery {s['gallery_size']}) ---")
+        print(f"  Self-cosine  : {s['self_cosine_mean']:.4f} (margin over cross: {s['cosine_margin']:.4f})")
+        print(f"  Mean rank    : {s['mean_rank_all']:.1f} / {s['gallery_size']}")
+        print(f"  Median rank  : {s['median_rank_all']} / {s['gallery_size']}")
+        print(f"  Hit@1={s['hit_at_1']:.1%}  Hit@5={s['hit_at_5']:.1%}  "
+              f"Hit@10={s['hit_at_10']:.1%}  Hit@20={s['hit_at_20']:.1%}  "
+              f"Hit@50={s['hit_at_50']:.1%}")
+
+    print(f"\nReport saved to: {emb_dir / 'self_consistency_report.txt'}")
+    print(f"JSON saved to:   {emb_dir / 'self_consistency_results.json'}")
 
 
 # ── Phase 7: Analysis / interpretation ───────────────────────────────────
@@ -467,7 +646,8 @@ def main():
         "--mode", type=str, default="prepare",
         choices=[
             "prepare", "build_possessions", "build_graphs",
-            "train", "evaluate", "inference", "search", "full_pipeline", "analyze",
+            "train", "evaluate", "inference", "search", "ground_truth",
+            "self_consistency", "full_pipeline", "analyze",
         ],
         help="Pipeline phase to run.",
     )
@@ -487,9 +667,41 @@ def main():
         "--max_graphs", type=int, default=None,
         help="Limit number of possession graphs for inference (faster validation).",
     )
+    parser.add_argument(
+        "--tag", type=str, default="",
+        help=(
+            "Experiment tag.  Namespaces Phase 3+ outputs so multiple "
+            "runs coexist on disk (e.g. --tag split_ctx).  Phase 1-2 "
+            "outputs remain shared."
+        ),
+    )
+    parser.add_argument(
+        "--split_context_edges", action="store_true", default=False,
+        help=(
+            "Split 360 context edges into teammate/opponent relation "
+            "types.  Must be used consistently across build_graphs, "
+            "train, evaluate, inference, and analyze for the same "
+            "experiment."
+        ),
+    )
+    parser.add_argument(
+        "--player_sampling", action="store_true", default=False,
+        help=(
+            "Enable player-aware batch sampling during training.  "
+            "Guarantees multiple possessions per player in every batch "
+            "so the contrastive loss receives positive pairs.  "
+            "Training-phase only; does not affect graphs or inference."
+        ),
+    )
     args = parser.parse_args()
 
     config = get_config()
+    if args.split_context_edges:
+        config.graph.split_context_edges = True
+    if args.player_sampling:
+        config.training.player_sampling = True
+    if args.tag:
+        config.apply_tag(args.tag)
     if args.competition:
         config.data.competition_ids = args.competition
     if args.season:
@@ -499,6 +711,16 @@ def main():
     print("GNN STATSBOMB PLAYER SIMILARITY SYSTEM")
     print("=" * 60)
     print(f"Mode         : {args.mode}")
+    if config.graph.split_context_edges:
+        print(f"Context edges: split (teammate / opponent)")
+    if config.training.player_sampling:
+        print(f"Sampling     : player-aware (K={config.training.players_per_batch}, "
+              f"M={config.training.possessions_per_player})")
+    if config.tag:
+        print(f"Tag          : {config.tag}")
+        print(f"  graphs     : {config.data.output_dir}/{config.graphs_filename}")
+        print(f"  checkpoints: {config.training.checkpoint_dir}")
+        print(f"  embeddings : {config.inference.embedding_output_dir}")
     print(f"Competitions : {config.data.competition_ids or 'all'}")
     print(f"Seasons      : {config.data.season_ids or 'all'}")
 
@@ -514,6 +736,10 @@ def main():
         run_evaluate(config)
     elif args.mode == "inference":
         run_inference(config, max_graphs=args.max_graphs)
+    elif args.mode == "ground_truth":
+        run_ground_truth(config)
+    elif args.mode == "self_consistency":
+        run_self_consistency(config)
     elif args.mode == "full_pipeline":
         run_full_pipeline(config)
     elif args.mode == "analyze":

@@ -10,13 +10,18 @@ mechanism to condition on the elapsed time between consecutive events.
 
 Architecture (per layer):
   HeteroConv({
-      ("event",  "next",         "event"):  GATv2Conv(edge_dim=1),
-      ("event",  "prev",         "event"):  GATv2Conv(edge_dim=1),
-      ("player", "acts_in",      "event"):  GATv2Conv,
-      ("event",  "performed_by", "player"): GATv2Conv,
-      ("player", "context_for",  "event"):  GATv2Conv,
+      ("event",  "next",            "event"):  GATv2Conv(edge_dim=1),
+      ("event",  "prev",            "event"):  GATv2Conv(edge_dim=1),
+      ("player", "acts_in",         "event"):  GATv2Conv,
+      ("event",  "performed_by",    "player"): GATv2Conv,
+      ("player", "context_for",     "event"):  GATv2Conv,   # default (unified)
   })
   → per-node-type ELU + LayerNorm + Dropout
+
+When ``split_context_edges=True`` (via ``--split_context_edges``), the single
+context relation is replaced by two:
+  ``("player", "context_for_tm",  "event")``   — teammate 360
+  ``("player", "context_for_opp", "event")``   — opponent 360
 
 Skip connections (input projected to d) are added after the final layer
 to prevent over-smoothing.
@@ -29,17 +34,30 @@ from torch_geometric.nn import GATv2Conv, HeteroConv
 from torch_geometric.data import HeteroData
 from typing import Dict, List, Optional, Tuple
 
-from ..config import ModelConfig
+from ..config import GraphConfig, ModelConfig
 
 
-# All relation triplets supported by this encoder.
-ALL_EDGE_TYPES: List[Tuple[str, str, str]] = [
+_BASE_EDGE_TYPES: List[Tuple[str, str, str]] = [
     ("event",  "next",         "event"),
     ("event",  "prev",         "event"),
     ("player", "acts_in",      "event"),
     ("event",  "performed_by", "player"),
-    ("player", "context_for",  "event"),
 ]
+
+_CTX_SPLIT: List[Tuple[str, str, str]] = [
+    ("player", "context_for_tm",  "event"),
+    ("player", "context_for_opp", "event"),
+]
+
+_CTX_UNIFIED: List[Tuple[str, str, str]] = [
+    ("player", "context_for", "event"),
+]
+
+
+def get_edge_types(split_context: bool = False) -> List[Tuple[str, str, str]]:
+    """Return the full relation list depending on the context-edge strategy."""
+    ctx = _CTX_SPLIT if split_context else _CTX_UNIFIED
+    return _BASE_EDGE_TYPES + ctx
 
 
 class PossessionGNNEncoder(nn.Module):
@@ -50,12 +68,15 @@ class PossessionGNNEncoder(nn.Module):
     in the same *d*-dimensional latent space.
     """
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: ModelConfig, graph_config: Optional[GraphConfig] = None):
         super().__init__()
         d = config.latent_dim
         h = config.hidden_dim
         heads = config.num_heads
         dropout = config.dropout
+
+        split_ctx = graph_config.split_context_edges if graph_config is not None else False
+        self.edge_types = get_edge_types(split_ctx)
 
         # Skip projections (identity shortcut through the GNN)
         self.skip_event = nn.Linear(d, d)
@@ -65,7 +86,7 @@ class PossessionGNNEncoder(nn.Module):
 
         # Layer 1: d → hidden_dim * heads
         conv1_dict = {}
-        for et in ALL_EDGE_TYPES:
+        for et in self.edge_types:
             conv1_dict[et] = GATv2Conv(
                 in_channels=d,
                 out_channels=h,
@@ -82,7 +103,7 @@ class PossessionGNNEncoder(nn.Module):
 
         # Layer 2: hidden_dim * heads → d (single head, no concat)
         conv2_dict = {}
-        for et in ALL_EDGE_TYPES:
+        for et in self.edge_types:
             conv2_dict[et] = GATv2Conv(
                 in_channels=h * heads,
                 out_channels=d,
@@ -122,7 +143,8 @@ class PossessionGNNEncoder(nn.Module):
         }
 
         # Filter to only the edge types present in this graph
-        active_ei = {k: v for k, v in edge_index_dict.items() if k in ALL_EDGE_TYPES}
+        _allowed = set(self.edge_types)
+        active_ei = {k: v for k, v in edge_index_dict.items() if k in _allowed}
 
         ea_kw: Dict = {}
         if edge_attr_dict:
