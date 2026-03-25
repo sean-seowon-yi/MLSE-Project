@@ -333,9 +333,19 @@ class TrainingConfig:
     val_ratio: float = 0.15
     test_ratio: float = 0.15
 
+    contrastive_temperature: float = 0.05
+
     player_sampling: bool = False
     players_per_batch: int = 16
     possessions_per_player: int = 6
+
+    anneal_temperature: bool = False
+    temperature_start: float = 0.10
+    temperature_end: float = 0.02
+
+    anneal_pooled_weight: bool = False
+    pooled_weight_start: float = 0.10
+    pooled_weight_end: float = 0.50
 
 
 @dataclass

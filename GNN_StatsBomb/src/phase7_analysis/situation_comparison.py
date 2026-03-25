@@ -156,7 +156,7 @@ class SituationComparator:
         g_dev = g_masked.to(self.device)
 
         with torch.no_grad():
-            out_dict = self.model.encode_possession(g_dev)
+            out_dict = self.model.encode_possession_counterfactual(g_dev)
             h_event = out_dict["event"]          # (T, d)
             h_ev = h_event[local_ev_idx]         # (d,)
 

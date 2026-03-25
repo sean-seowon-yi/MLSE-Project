@@ -12,6 +12,7 @@ Modes
   search             Phase 6 — find similar players to a query.
   ground_truth       Evaluate pseudo ground-truth player pairs (rank check).
   self_consistency   Intrinsic self-consistency test (cross-competition + random-half).
+  policy_diagnostic  Policy distance correlation + substitute quality diagnostic.
   full_pipeline      Run Phases 1→6A end-to-end (no search).
   analyze            Phase 7 — interpret embeddings and similarities.
 
@@ -225,7 +226,7 @@ def build_graphs(config: Config) -> None:
 
 # ── Phase 5 (includes Phase 4 model creation) ───────────────────────────
 
-def train_model(config: Config) -> None:
+def train_model(config: Config, resume_from: str = None) -> None:
     """Phase 5: Train the GNN model."""
     import torch
     from torch.utils.data import DataLoader
@@ -291,7 +292,7 @@ def train_model(config: Config) -> None:
     print(f"\nModel parameters: {n_params:,}")
 
     trainer = Trainer(model, config.training, train_loader, val_loader)
-    trainer.train()
+    trainer.train(resume_from=resume_from)
 
     print("\nTraining complete.")
 
@@ -606,6 +607,93 @@ def analyze_results(config: Config, num_queries: int = 5) -> None:
     builder.run()
 
 
+# ── Policy diagnostic ─────────────────────────────────────────────────────
+
+def run_policy_diagnostic(config: Config) -> None:
+    """Run policy-distance and substitute-quality diagnostics.
+
+    Tests whether cosine similarity in the learned embedding space
+    corresponds to actual behavioral similarity (JS divergence of
+    predicted action distributions in identical game situations).
+    """
+    import torch
+    from src.phase3_graph import PossessionGraphBuilder
+    from src.phase4_model import PlayerSimilarityModel
+    from src.phase6_inference.policy_diagnostic import PolicyDiagnostic
+
+    print("\n" + "=" * 60)
+    print("POLICY DIAGNOSTIC")
+    print("=" * 60)
+
+    out_dir = Path(config.data.output_dir)
+    graphs = PossessionGraphBuilder.load(str(out_dir / config.graphs_filename))
+    validate_graph_config_match(graphs, config.graph.split_context_edges)
+    meta = pd.read_parquet(out_dir / "event_metadata.parquet")
+
+    print(f"\nGraphs loaded: {len(graphs):,}  ({config.graphs_filename})")
+
+    emb_dir = Path(config.inference.embedding_output_dir)
+    Z = np.load(emb_dir / "player_embeddings.npy")
+    player_info = pd.read_parquet(emb_dir / "player_info.parquet")
+
+    print(f"Embeddings loaded: {Z.shape[0]} players, {Z.shape[1]}-D")
+
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    model = PlayerSimilarityModel(config.model, graph_config=config.graph)
+    ckpt_path = Path(config.training.checkpoint_dir) / "best_model.pt"
+    if not ckpt_path.exists():
+        print(f"Checkpoint not found: {ckpt_path}")
+        print("Run --mode train first.")
+        return
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    model.load_state_dict(ckpt["model_state_dict"])
+
+    diagnostic = PolicyDiagnostic(
+        model=model,
+        device=device,
+        Z=Z,
+        player_info=player_info,
+        graphs=graphs,
+        metadata=meta,
+    )
+    result = diagnostic.run(output_dir=emb_dir)
+
+    corr = result.get("correlation", {})
+    if "overall" in corr:
+        ov = corr["overall"]
+        print(f"\n--- Policy Distance Correlation ---")
+        print(f"  Overall Spearman rho: {ov['spearman_rho']:.4f}  "
+              f"(p = {ov['p_value']:.2e})")
+        for grp in ["Goalkeeper", "Defender", "Midfielder", "Forward"]:
+            if grp in corr:
+                g = corr[grp]
+                print(f"  {grp:12s}: rho = {g['spearman_rho']:+.4f}")
+
+    sub = result.get("substitute_quality", {})
+    if sub.get("n_queries", 0) > 0:
+        print(f"\n--- Substitute Quality ---")
+        print(f"  JS(top-K) = {sub['aggregate_mean_js_top_k']:.6f}  "
+              f"JS(random) = {sub['aggregate_mean_js_random_k']:.6f}  "
+              f"ratio = {sub['aggregate_ratio']:.2f}")
+
+    film = result.get("film_sensitivity", {})
+    if film:
+        print(f"\n--- FiLM Sensitivity ---")
+        print(f"  Overall: mean JS(correct vs shuffled) = {film['overall_mean_js']:.6f}  "
+              f"median = {film['overall_median_js']:.6f}")
+        for grp in ["Goalkeeper", "Defender", "Midfielder", "Forward"]:
+            if grp in film.get("per_group", {}):
+                g = film["per_group"][grp]
+                print(f"  {grp:12s}: mean = {g['mean_js']:.6f}")
+
+    print(f"\nReport: {emb_dir / 'policy_diagnostic_report.txt'}")
+    print(f"JSON:   {emb_dir / 'policy_diagnostic_results.json'}")
+
+
 # ── Full pipeline helper ─────────────────────────────────────────────────
 
 def run_full_pipeline(config: Config) -> None:
@@ -648,6 +736,7 @@ def main():
             "prepare", "build_possessions", "build_graphs",
             "train", "evaluate", "inference", "search", "ground_truth",
             "self_consistency", "full_pipeline", "analyze",
+            "policy_diagnostic",
         ],
         help="Pipeline phase to run.",
     )
@@ -693,6 +782,14 @@ def main():
             "Training-phase only; does not affect graphs or inference."
         ),
     )
+    parser.add_argument(
+        "--resume", type=str, default=None,
+        help=(
+            "Resume training from a checkpoint file (e.g. "
+            "'checkpoint_epoch_130.pt').  Loads model weights, optimizer, "
+            "scheduler, and best_val_loss.  Only applies to --mode train."
+        ),
+    )
     args = parser.parse_args()
 
     config = get_config()
@@ -700,6 +797,15 @@ def main():
         config.graph.split_context_edges = True
     if args.player_sampling:
         config.training.player_sampling = True
+        config.training.contrastive_temperature = 0.15
+        config.training.lambda_contrast = 0.15
+        config.training.lambda_pooled_contrast = 0.5
+        config.training.anneal_temperature = True
+        config.training.temperature_start = 0.15
+        config.training.temperature_end = 0.02
+        config.training.anneal_pooled_weight = True
+        config.training.pooled_weight_start = 0.10
+        config.training.pooled_weight_end = 0.50
     if args.tag:
         config.apply_tag(args.tag)
     if args.competition:
@@ -716,6 +822,16 @@ def main():
     if config.training.player_sampling:
         print(f"Sampling     : player-aware (K={config.training.players_per_batch}, "
               f"M={config.training.possessions_per_player})")
+        print(f"  temperature: {config.training.contrastive_temperature}  "
+              f"λ_contrast: {config.training.lambda_contrast}  "
+              f"λ_pooled: {config.training.lambda_pooled_contrast}")
+        if config.training.anneal_temperature or config.training.anneal_pooled_weight:
+            parts = []
+            if config.training.anneal_temperature:
+                parts.append(f"temp {config.training.temperature_start}->{config.training.temperature_end}")
+            if config.training.anneal_pooled_weight:
+                parts.append(f"λ_pooled {config.training.pooled_weight_start}->{config.training.pooled_weight_end}")
+            print(f"  annealing  : {', '.join(parts)}")
     if config.tag:
         print(f"Tag          : {config.tag}")
         print(f"  graphs     : {config.data.output_dir}/{config.graphs_filename}")
@@ -731,7 +847,7 @@ def main():
     elif args.mode == "build_graphs":
         build_graphs(config)
     elif args.mode == "train":
-        train_model(config)
+        train_model(config, resume_from=args.resume)
     elif args.mode == "evaluate":
         run_evaluate(config)
     elif args.mode == "inference":
@@ -744,6 +860,8 @@ def main():
         run_full_pipeline(config)
     elif args.mode == "analyze":
         analyze_results(config)
+    elif args.mode == "policy_diagnostic":
+        run_policy_diagnostic(config)
     elif args.mode == "search":
         if args.player_id is None:
             parser.error("--player_id is required for search mode.")

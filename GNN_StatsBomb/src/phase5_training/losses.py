@@ -218,15 +218,21 @@ class CombinedLoss(nn.Module):
         lambda_outcome: float = 0.5,
         lambda_contrast: float = 0.3,
         lambda_pooled_contrast: float = 0.3,
+        contrastive_temperature: float = 0.05,
     ):
         super().__init__()
         self.action_loss = ActionPredictionLoss()
         self.outcome_loss = OutcomePredictionLoss()
-        self.contrastive_loss = ContrastiveLoss()
+        self.contrastive_loss = ContrastiveLoss(temperature=contrastive_temperature)
         self.pooled_uniformity_loss = PooledUniformityLoss()
         self.lambda_outcome = lambda_outcome
         self.lambda_contrast = lambda_contrast
         self.lambda_pooled_contrast = lambda_pooled_contrast
+
+    def set_schedule(self, temperature: float, lambda_pooled: float) -> None:
+        """Update temperature and pooled-uniformity weight mid-training."""
+        self.contrastive_loss.temperature = temperature
+        self.lambda_pooled_contrast = lambda_pooled
 
     def forward(
         self,

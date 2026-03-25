@@ -9,6 +9,7 @@ Handles:
 """
 
 import json
+import math
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -69,6 +70,7 @@ class Trainer:
             lambda_outcome=config.lambda_outcome,
             lambda_contrast=config.lambda_contrast,
             lambda_pooled_contrast=config.lambda_pooled_contrast,
+            contrastive_temperature=config.contrastive_temperature,
         ).to(self.device)
 
         self.best_val_loss = float("inf")
@@ -80,36 +82,97 @@ class Trainer:
             "train_contrastive": [],
             "train_pooled_uniform": [],
             "val_total": [],
+            "val_supervised": [],
+            "val_action": [],
+            "val_outcome": [],
+            "val_contrastive": [],
+            "val_pooled_uniform": [],
             "learning_rate": [],
         }
 
         self.checkpoint_dir = Path(config.checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+    # ── Schedule helpers ───────────────────────────────────────────────
+
+    @staticmethod
+    def _cosine_anneal(start: float, end: float, progress: float) -> float:
+        """Cosine annealing from *start* to *end* as *progress* goes 0 -> 1."""
+        return end + 0.5 * (start - end) * (1.0 + math.cos(math.pi * progress))
+
+    def _apply_schedule(self, epoch: int) -> None:
+        """Apply temperature / uniformity-weight annealing at epoch start."""
+        cfg = self.config
+        n = max(cfg.num_epochs - 1, 1)
+        progress = epoch / n
+
+        temp = cfg.contrastive_temperature
+        lam_pool = cfg.lambda_pooled_contrast
+
+        if cfg.anneal_temperature:
+            temp = self._cosine_anneal(cfg.temperature_start, cfg.temperature_end, progress)
+        if cfg.anneal_pooled_weight:
+            lam_pool = self._cosine_anneal(cfg.pooled_weight_start, cfg.pooled_weight_end, progress)
+
+        if cfg.anneal_temperature or cfg.anneal_pooled_weight:
+            self.criterion.set_schedule(temp, lam_pool)
+            if epoch % 20 == 0:
+                print(f"  [schedule] temp={temp:.4f}, lambda_pooled={lam_pool:.4f}")
+
     # ── Training loop ────────────────────────────────────────────────
 
-    def train(self) -> Dict[str, list]:
+    def train(self, resume_from: str = None) -> Dict[str, list]:
+        start_epoch = 0
+        last_epoch = -1
+        last_val_loss = float("inf")
+
+        if resume_from:
+            last_epoch, last_val_loss = self.load_checkpoint(resume_from)
+            start_epoch = last_epoch + 1
+            print(f"Resumed from {resume_from} (epoch {start_epoch}), "
+                  f"best_val_loss={self.best_val_loss:.4f}, "
+                  f"patience={self.patience_counter}/{self.config.patience}")
+
+        if start_epoch >= self.config.num_epochs:
+            print(f"\nAlready completed {start_epoch} epochs "
+                  f"(num_epochs={self.config.num_epochs}). Nothing to do.")
+            return self.history
+
         print(f"Training on device: {self.device}")
         print(f"Epochs: {self.config.num_epochs}, Batch size: {self.config.batch_size}")
         print(f"LR: {self.config.learning_rate}")
 
-        for epoch in range(self.config.num_epochs):
+        for epoch in range(start_epoch, self.config.num_epochs):
+            self._apply_schedule(epoch)
+
             print(f"\n{'=' * 50}")
             print(f"Epoch {epoch + 1}/{self.config.num_epochs}")
             print(f"{'=' * 50}")
 
             train_losses = self._train_epoch()
-            val_loss = self._validate()
+            val_losses = self._validate()
+
+            # Supervised-only metric: immune to annealing schedule changes
+            val_supervised = (val_losses["action"]
+                              + self.config.lambda_outcome * val_losses["outcome"])
+
+            last_epoch = epoch
+            last_val_loss = val_supervised
 
             lr = self.optimizer.param_groups[0]["lr"]
-            self.scheduler.step(val_loss)
+            self.scheduler.step(val_supervised)
 
             self.history["train_total"].append(train_losses["total"])
             self.history["train_action"].append(train_losses["action"])
             self.history["train_outcome"].append(train_losses["outcome"])
             self.history["train_contrastive"].append(train_losses["contrastive"])
             self.history["train_pooled_uniform"].append(train_losses["pooled_uniform"])
-            self.history["val_total"].append(val_loss)
+            self.history["val_total"].append(val_losses["total"])
+            self.history["val_supervised"].append(val_supervised)
+            self.history["val_action"].append(val_losses["action"])
+            self.history["val_outcome"].append(val_losses["outcome"])
+            self.history["val_contrastive"].append(val_losses["contrastive"])
+            self.history["val_pooled_uniform"].append(val_losses["pooled_uniform"])
             self.history["learning_rate"].append(lr)
 
             print(f"Train — total: {train_losses['total']:.4f}  "
@@ -117,25 +180,30 @@ class Trainer:
                   f"outcome: {train_losses['outcome']:.4f}  "
                   f"contrast: {train_losses['contrastive']:.4f}  "
                   f"uniform: {train_losses['pooled_uniform']:.4f}")
-            print(f"Val   — total: {val_loss:.4f}   LR: {lr:.6f}")
+            print(f"Val   — supervised: {val_supervised:.4f}  "
+                  f"action: {val_losses['action']:.4f}  "
+                  f"outcome: {val_losses['outcome']:.4f}  "
+                  f"contrast: {val_losses['contrastive']:.4f}  "
+                  f"uniform: {val_losses['pooled_uniform']:.4f}  "
+                  f"LR: {lr:.6f}")
 
-            if val_loss < self.best_val_loss - self.config.min_delta:
-                self.best_val_loss = val_loss
+            if val_supervised < self.best_val_loss - self.config.min_delta:
+                self.best_val_loss = val_supervised
                 self.patience_counter = 0
-                self._save_checkpoint("best_model.pt", epoch, val_loss)
+                self._save_checkpoint("best_model.pt", epoch, val_supervised)
                 print("  [New best model saved]")
             else:
                 self.patience_counter += 1
                 print(f"  [No improvement for {self.patience_counter} epochs]")
 
             if (epoch + 1) % self.config.save_every_n_epochs == 0:
-                self._save_checkpoint(f"checkpoint_epoch_{epoch + 1}.pt", epoch, val_loss)
+                self._save_checkpoint(f"checkpoint_epoch_{epoch + 1}.pt", epoch, val_supervised)
 
             if self.patience_counter >= self.config.patience:
                 print(f"\nEarly stopping after {epoch + 1} epochs.")
                 break
 
-        self._save_checkpoint("final_model.pt", epoch, val_loss)
+        self._save_checkpoint("final_model.pt", last_epoch, last_val_loss)
         self._save_history()
         return self.history
 
@@ -219,9 +287,9 @@ class Trainer:
         return {k: v / n for k, v in accum.items()}
 
     @torch.no_grad()
-    def _validate(self) -> float:
+    def _validate(self) -> Dict[str, float]:
         self.model.eval()
-        total_loss = 0.0
+        accum = {"total": 0.0, "action": 0.0, "outcome": 0.0, "contrastive": 0.0, "pooled_uniform": 0.0}
         n_batches = 0
 
         for batch in tqdm(self.val_loader, desc="Validation", leave=False):
@@ -270,10 +338,12 @@ class Trainer:
                 contrastive_position_groups=cont_pos_groups,
                 pooled_embeddings=pooled_emb,
             )
-            total_loss += losses["total"].item()
+            for k in accum:
+                accum[k] += losses[k].item()
             n_batches += 1
 
-        return total_loss / max(n_batches, 1)
+        n = max(n_batches, 1)
+        return {k: v / n for k, v in accum.items()}
 
     # ── Persistence ──────────────────────────────────────────────────
 
@@ -286,6 +356,8 @@ class Trainer:
             "scheduler_state_dict": self.scheduler.state_dict(),
             "val_loss": val_loss,
             "best_val_loss": self.best_val_loss,
+            "patience_counter": self.patience_counter,
+            "history": self.history,
         }, path)
 
     def load_checkpoint(self, filename: str) -> Tuple[int, float]:
@@ -295,6 +367,10 @@ class Trainer:
         self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         self.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
         self.best_val_loss = ckpt["best_val_loss"]
+        self.patience_counter = ckpt.get("patience_counter", 0)
+        saved_history = ckpt.get("history")
+        if saved_history and isinstance(saved_history, dict):
+            self.history = saved_history
         return ckpt["epoch"], ckpt["val_loss"]
 
     def _save_history(self):

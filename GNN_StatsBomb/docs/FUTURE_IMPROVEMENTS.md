@@ -42,7 +42,7 @@ The following points were identified as theoretical and practical vulnerabilitie
 
 **Improvement:** Add a confidence score (e.g. based on number of possessions and/or embedding stability) and use it to filter or down-weight low-sample players in similarity search (Phase 6).
 
-### 6. Evaluation metrics do not validate similarity
+### 6. ~~Evaluation metrics do not validate similarity~~ (PARTIALLY IMPLEMENTED)
 
 **Issue:** Phase 5 evaluation is based on action/outcome prediction accuracy. There is no ground truth for “similarity,” and no check that nearest neighbours correspond to domain intuition.
 
@@ -52,6 +52,8 @@ The following points were identified as theoretical and practical vulnerabilitie
 - Report **rank correlation** or **Hit@K** between model rankings and this reference.  
 - This ensures the latent space aligns with expert notion of similarity.
 
+**Status:** Partially addressed. `--mode ground_truth` (`src/phase6_inference/ground_truth.py`) evaluates pseudo ground-truth player pairs via rank checks and Hit@K. `--mode self_consistency` (`src/phase6_inference/self_consistency.py`) tests embedding stability across competition splits and random halves. Together these provide intrinsic validation that nearest neighbours are meaningful. A fully expert-annotated ground truth set remains future work.
+
 ### 7. 360 context and “one node per player”
 
 **Issue:** The design states one node per distinct player and that off-ball players get spatial offset (dx, dy) from the ball. A player’s (dx, dy) is different at every event (ball and players move). If there is truly one player node per possession, that node can hold only one (dx, dy) — so later events would receive wrong spatial context unless one of the following is true: (A) player-instance nodes per event, (B) (dx, dy) on the `context_for` edge, or (C) a stored sequence/aggregation of positions. The written spec does not clearly adopt (A), (B), or (C).
@@ -60,7 +62,7 @@ The following points were identified as theoretical and practical vulnerabilitie
 
 **Improvement (optional):** Alternatively, use one player node per distinct player per possession and put **edge attributes on `context_for`**: e.g. `edge_attr = (dx, dy, dist, angle, teammate/opponent flag, optionally is_goalkeeper)`. That yields fewer nodes and the same information. Updating SYSTEM_DESIGN to describe context as “one node per (event, slot) with (dx, dy) on the node” removes the spec/implementation mismatch.
 
-### 8. Situation encoding h_{\text{event}} may not be player-agnostic
+### 8. ~~Situation encoding h_{\text{event}} may not be player-agnostic~~ (IMPLEMENTED)
 
 **Issue:** h_{\text{event}} is used as “the situation” and then different players’ z_p are swapped in Phase 7. That is only valid if h_{\text{event}} does not encode actor identity. Currently, message passing includes `(player, acts_in, event)` and `(event, performed_by, player)`. Even without an explicit player_id on events, player nodes carry position embedding, possession-team flag, and (in the current spec) actor (dx, dy). So h_{\text{event}} can absorb “when the actor is a CB” or similar role/style leakage. Position is masked from event *features*, but it can still enter event nodes via the player→event edges. Phase 7 then risks swapping z_p into a situation embedding that already “knows” who acted.
 
@@ -69,7 +71,9 @@ The following points were identified as theoretical and practical vulnerabilitie
 - **Counterfactual-safe encoding:** When extracting h_{\text{event}} for Phase 7, use an encoder variant that removes or masks `acts_in` / `performed_by` so h_{\text{event}} depends only on context players and temporal history.  
 - Or at least: stop-gradient or zero the actor’s player features on the `acts_in` message path so that h_{\text{event}} is not conditioned on actor identity.
 
-### 9. Learning “usage / tactical environment” vs “decision policy”
+**Status:** Implemented via encode_possession_counterfactual in src/phase4_model/model.py. This method drops (player, acts_in, event) edges while retaining (event, performed_by, player) and context_for edges. Used in both the policy diagnostic (src/phase6_inference/policy_diagnostic.py) and Phase 7 situation comparison (src/phase7_analysis/situation_comparison.py). Before/after comparison shows the fix improves substitute quality in 3/4 models (up to +22%) without degrading correlation. See EVALUATION_RESULTS.md Section 7.
+
+### 9. ~~Learning “usage / tactical environment” vs “decision policy”~~ (IMPLEMENTED)
 
 **Issue:** Even with correct masking, z_p is learned by aggregating over the distribution of situations a player experiences. That distribution is confounded by team tactics, league, quality of teammates/opponents, and role. Two players can look similar because they receive the ball in similar zones under similar pressure, not because their *conditional* action choices are similar. Phase 7 (same h_{\text{event}}, swap z_p) partly addresses this, but retrieval is still \cos(z_p, z_q).
 
@@ -77,7 +81,9 @@ The following points were identified as theoretical and practical vulnerabilitie
 *D(p,q) = \mathbb{E}_{s \sim S^*}[ \mathrm{JS}(\pi_p(\cdot|s), \pi_q(\cdot|s)) ].  
 Check correlation between this and cosine distance in z_p. If correlation is weak, the embedding space is not aligned with “decision policy similarity.”
 
-### 10. FiLM does not mathematically force use of z_p
+**Status:** Implemented in \src/phase6_inference/policy_diagnostic.py\ (\--mode policy_diagnostic\). Spearman rho = 0.66-0.71 across all four model variants, confirming that the embedding space is well-aligned with decision-policy similarity. See EVALUATION_RESULTS.md section 5.
+
+### 10. ~~FiLM does not mathematically force use of z_p~~ (PARTIALLY IMPLEMENTED)
 
 **Issue:** The argument “concatenation can be ignored; FiLM cannot” is not strict: the model can learn \gamma(\cdot) \approx 0 and \beta(\cdot) \approx 0, effectively removing dependence on z_p if situation features already predict well. Contrastive and uniformity losses help but uniformity only spreads z_p — it does not guarantee that neighbours reflect policy similarity.
 
@@ -85,6 +91,7 @@ Check correlation between this and cosine distance in z_p. If correlation is wea
 
 - **Sensitivity:** For fixed h_{\text{event}}, measure how much predicted action distributions change when swapping z_p across players. If the change is tiny, z_p is not load-bearing.  
 - **Regulariser:** e.g. predict a baseline policy from h_{\text{event}} only, then a player-specific delta; penalise small deltas only when they hurt likelihood, so that player conditioning must explain residual.
+**Status:** Sensitivity diagnostic implemented in \src/phase6_inference/policy_diagnostic.py\. FiLM is confirmed load-bearing in all four models (JS > 0 for all groups). Effect is larger for baseline/split-ctx (0.011-0.013) than player-samp (0.003), reflecting tighter within-group clustering in the latter. See EVALUATION_RESULTS.md section 6. The regulariser suggestion remains unimplemented.
 
 ### 11. ~~Contrastive positives may be too scarce~~ (IMPLEMENTED)
 
@@ -103,7 +110,7 @@ Check correlation between this and cosine distance in z_p. If correlation is wea
 - Include **minute** (e.g. normalised within period) in situation features.  
 - Include **score differential** only in the situation encoder (e.g. for action prediction), and **exclude it from the path that produces z_p** (or regress/adversarially remove it from z_p) so that similarity is not confounded by score state.
 
-### 13. Substitute-specific evaluation
+### 13. ~~Substitute-specific evaluation~~ (IMPLEMENTED)
 
 **Issue:** Action accuracy and macro F1 measure “can the model imitate,” not “are nearest neighbours good substitutes.”
 
@@ -112,6 +119,25 @@ Check correlation between this and cosine distance in z_p. If correlation is wea
 - **Counterfactual agreement:** For held-out events, compare KL/JS between predicted action distributions of query vs neighbour in the same h_{\text{event}}. Report mean/median JS for top-k vs random-k.  
 - **Top-k retrieval task:** Given held-out events from player p, retrieve a candidate set and score which player’s z best predicts p’s actions on those events.  
 - **Stability:** Neighbours should be stable under resampling of possessions; if they change wildly, z_p is not robust.
+
+**Status:** Implemented in `src/phase6_inference/policy_diagnostic.py` (`--mode policy_diagnostic`). Top-K cosine neighbours are 1.8-17.2x more behaviourally similar than random same-group players (ratio metric). See EVALUATION_RESULTS.md section 5.
+
+### 14. ~~Early stopping corrupted by auxiliary loss annealing~~ (FIXED)
+
+**Issue:** The validation metric used for early stopping, best-model checkpointing, and LR scheduling was `val_total` — the full combined loss including contrastive and pooled uniformity terms. When `anneal_pooled_weight` is enabled, `lambda_pooled_contrast` ramps up over training (e.g. 0.1 → 0.5). Because pooled uniformity is a *negative* loss (it rewards spread), increasing its weight artificially deflates `val_total` even when supervised losses (action, outcome) stagnate or worsen. This caused the trainer to:
+
+1. Save "best" models based on a misleadingly low total loss rather than actual prediction quality.
+2. Delay early stopping because the annealing schedule kept pushing total loss down.
+3. Under-trigger LR reduction (`ReduceLROnPlateau`) since the scheduler saw improving loss.
+
+**Fix:** `trainer.py` was refactored so that:
+
+- `_validate()` returns a dictionary of all individual validation losses.
+- A **supervised-only** metric `val_supervised = val_action + λ_outcome · val_outcome` (using fixed weights only) is computed and used for early stopping, best-model selection, and `ReduceLROnPlateau.step()`.
+- All individual validation losses (action, outcome, contrastive, pooled_uniform) are logged to history and printed per epoch for full visibility.
+- The auxiliary losses (contrastive, uniformity) still contribute to the training gradient via `val_total`, but do not influence model selection.
+
+**Status:** Fixed in `src/phase5_training/trainer.py`. Existing checkpoints trained before this fix should be retrained for properly validated model selection.
 
 ---
 
@@ -127,17 +153,18 @@ The following notes reflect checks against the actual codebase and StatsBomb dat
 | 3   | **Keep**                  | Phase 7 wording in SYSTEM_DESIGN is indeed strong; reframing as “action preference given identical constraints” is accurate and does not depend on data.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | 4   | **Keep**                  | `action_targets.py` uses 9 angle bins and 5 length bins; boundaries can over-penalise. MDN/regression is a valid extension; no data constraint.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | 5   | **Keep**                  | `min_samples_per_player = 50` is in config; no confidence or stability score exists. Improvement is consistent with the goal.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 6   | **Keep**                  | No ground-truth similarity labels in the data; building a small annotated set or using external clusters is an evaluation add-on, not a data mismatch.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 6   | **Partially Implemented** | Pseudo ground-truth evaluation (`ground_truth.py`) and self-consistency tests (`self_consistency.py`) now validate that nearest neighbours are meaningful. Fully expert-annotated ground truth remains future work. |
 | 7   | **Qualify**               | **Implementation already uses per-event geometry.** In `graph_builder.py`, off-ball players are keyed by `("tm", local_ev_idx, k)` or `("opp", local_ev_idx, k)` — i.e. **one node per (event, slot)** with that event’s `(dx, dy)` on the node. So geometry is correct; the design doc’s “one node per distinct player” is wrong only for *context* players (actors are one per (player_id, possession)). The suggested change (one player node per possession + `context_for` edge attributes) is an **optional design alternative** (fewer nodes, same information), not a fix for wrong geometry. Recommend: update SYSTEM_DESIGN to describe context as “one node per (event, slot) with (dx, dy) on the node” and treat edge_attr as an optional refinement. |
-| 8   | **Keep**                  | Phase 7 uses `encode_possession(g_dev)` then `h_event[local_ev_idx]`; the full graph (including `acts_in` / `performed_by`) is used, so actor identity can leak into h_{\text{event}}. Counterfactual-safe encoder or stop-gradient is valid.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 9   | **Keep**                  | Diagnostic (policy distance vs cosine in z_p) is implementable using existing model and events; canonical S^* can be sampled from test events. Aligns with problem.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| 10  | **Keep**                  | FiLM can still learn near-identity; sensitivity and residual regulariser are useful checks. No data dependency.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 8   | **Implemented**                  | Phase 7 uses `encode_possession(g_dev)` then `h_event[local_ev_idx]`; the full graph (including `acts_in` / `performed_by`) is used, so actor identity can leak into h_{\text{event}}. Counterfactual-safe encoder or stop-gradient is valid.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 9   | **Implemented**           | Policy distance diagnostic implemented in `src/phase6_inference/policy_diagnostic.py`. Overall Spearman rho 0.66-0.71 across all 4 models (p=0.0). See EVALUATION_RESULTS.md §5.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 10  | **Partially Implemented**                  | FiLM can still learn near-identity; sensitivity and residual regulariser are useful checks. No data dependency.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | 11  | **Implemented**           | `PlayerAwareBatchSampler` (K=16, M=6) guarantees contrastive positive pairs. Enabled via `--player_sampling` CLI flag; backward compatible.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | 12  | **Keep (with data note)** | **Minute:** Available in metadata (`possession_builder` and `feature_encoder` use `minute`, `second`, `timestamp`); not currently in the 126-D event vector (only period one-hot is). Can be added. **Score:** Match-level `home_score`/`away_score` exist in data prep; **running score at event time** is not in StatsBomb open data and would need to be computed from goal events if used.                                                                                                                                                                                                                                                                                                                                                                     |
-| 13  | **Keep**                  | Substitute-specific metrics (JS/KL, retrieval task, stability) are evaluation additions that match the project goal; no data or scope conflict.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 13  | **Implemented**           | Substitute-quality diagnostic implemented in `src/phase6_inference/policy_diagnostic.py`. Top-K cosine neighbours are 1.8-17.2x more behaviorally similar than random same-group players. See EVALUATION_RESULTS.md §5.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 14  | **Fixed**                 | Early stopping / best-model selection was corrupted by annealed auxiliary loss weights deflating `val_total`. Fixed: trainer now uses supervised-only metric (`action + λ_outcome · outcome`) for early stopping and LR scheduling. See `trainer.py`. |
 
 
-**Summary:** No item is unnecessary or out of scope. The only substantive correction is **#7**: the graph is not “silently wrong” — context geometry is per-event via many context nodes. The improvement is an optional, cleaner design (edge_attr instead of many nodes), and the written spec should be aligned with the implementation.
+**Summary:** No item is unnecessary or out of scope. The only substantive correction is **#7**: the graph is not “silently wrong” — context geometry is per-event via many context nodes. The improvement is an optional, cleaner design (edge_attr instead of many nodes), and the written spec should be aligned with the implementation. **#14** was a critical training bug discovered post-hoc and has been fixed.
 
 ---
 
@@ -160,8 +187,9 @@ The following notes reflect checks against the actual codebase and StatsBomb dat
 
 ### 2. Training objectives
 
-- **Contrastive temperature:** τ = 0.05 is fixed. A small schedule or learnable temperature could sharpen separation later in training.
-- **Pooled loss:** Uniformity spreads everyone apart. A mild **alignment** term for same-player pooled `z_p` across different batch samples (where such pairs exist) could stabilize identity.
+- ~~**Contrastive temperature:** τ = 0.05 is fixed. A small schedule or learnable temperature could sharpen separation later in training.~~ **Implemented:** Cosine-annealed temperature schedule (e.g. 0.15 → 0.02) via `anneal_temperature` config flag.
+- ~~**Pooled weight scheduling:** Fixed λ_pooled weight.~~ **Implemented:** Cosine-annealed `lambda_pooled_contrast` (e.g. 0.1 → 0.5) via `anneal_pooled_weight` config flag. **Note:** Annealing these auxiliary weights exposed a training bug (see "Critical vulnerabilities" #14 below) that has since been fixed.
+- **Pooled alignment:** Uniformity spreads everyone apart. A mild **alignment** term for same-player pooled `z_p` across different batch samples (where such pairs exist) could stabilize identity.
 - **Action loss weighting:** Beyond Focal + class weights, weighting by “surprise” (e.g. inverse model confidence) could focus the model on harder, more discriminative events.
 
 ### 3. Data & labels
@@ -187,6 +215,7 @@ The following notes reflect checks against the actual codebase and StatsBomb dat
 ## Document info
 
 - **Created:** For future considerations; reflects post–uniformity-loss and dual-channel position run.
-- **Critical vulnerabilities & blind spots:** Added from external critical analysis; items agreed and transcribed for future work (graph geometry, temporal scaling, counterfactual framing, discretization, evaluation, 360/node semantics, situation encoder leakage, usage vs policy, FiLM sensitivity, contrastive batching, context features, substitute-specific metrics).
+- **Last updated:** Post early-stopping fix (trainer now uses supervised-only val metric for model selection). Temperature and pooled-weight annealing implemented. Ground-truth and self-consistency evaluations added.
+- **Critical vulnerabilities & blind spots:** Added from external critical analysis; items agreed and transcribed for future work (graph geometry, temporal scaling, counterfactual framing, discretization, evaluation, 360/node semantics, situation encoder leakage, usage vs policy, FiLM sensitivity, contrastive batching, context features, substitute-specific metrics, early-stopping bug #14).
 - **See also:** [SYSTEM_DESIGN.md](../SYSTEM_DESIGN.md), [README.md](../README.md), phase docs in this folder.
 

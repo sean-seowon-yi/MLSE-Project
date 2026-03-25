@@ -315,3 +315,34 @@ class PlayerSimilarityModel(nn.Module):
         edge_index_dict = {et: data[et].edge_index for et in data.edge_types}
         edge_attr_dict = self._collect_edge_attrs(data)
         return self.gnn(x_dict, edge_index_dict, edge_attr_dict=edge_attr_dict)
+
+    _ACTOR_IDENTITY_EDGES = frozenset({
+        ("player", "acts_in", "event"),
+    })
+
+    def encode_possession_counterfactual(
+        self,
+        data: HeteroData,
+    ) -> Dict[str, torch.Tensor]:
+        """Like encode_possession but drops acts_in edges.
+
+        Removes the player-to-event message path that carries actor
+        identity into h_event.  The reverse edge (performed_by) is kept
+        so that player nodes remain part of the GNN computation —
+        context_for edges from off-ball players are unaffected.
+        """
+        x_event = self.event_proj(data["event"].x)
+        x_player = self.player_proj(data["player"].x)
+        x_dict = {"event": x_event, "player": x_player}
+        edge_index_dict = {
+            et: data[et].edge_index
+            for et in data.edge_types
+            if et not in self._ACTOR_IDENTITY_EDGES
+        }
+        edge_attr_dict = self._collect_edge_attrs(data)
+        if edge_attr_dict:
+            edge_attr_dict = {
+                k: v for k, v in edge_attr_dict.items()
+                if k not in self._ACTOR_IDENTITY_EDGES
+            }
+        return self.gnn(x_dict, edge_index_dict, edge_attr_dict=edge_attr_dict)
