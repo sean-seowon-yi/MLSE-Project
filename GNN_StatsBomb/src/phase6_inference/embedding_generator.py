@@ -16,6 +16,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import unicodedata
+
 import numpy as np
 import pandas as pd
 import torch
@@ -26,6 +28,20 @@ from ..config import InferenceConfig, get_config
 from ..phase3_graph.masking import mask_future_info
 from ..phase4_model.model import PlayerSimilarityModel
 from ..phase4_model.pooling import AttentionPooling
+from .provenance import build_manifest, write_manifest
+
+
+def _clean_name(name: str) -> str:
+    """Strip non-Latin script characters (Georgian, Arabic, CJK, etc.)."""
+    out = []
+    for ch in name:
+        cp = ord(ch)
+        if (cp <= 0x024F
+                or 0x1E00 <= cp <= 0x1EFF
+                or 0x2000 <= cp <= 0x206F
+                or 0x0300 <= cp <= 0x036F):
+            out.append(ch)
+    return "".join(out).strip()
 
 
 INFERENCE_BATCH_SIZE = 32
@@ -137,16 +153,29 @@ class EmbeddingGenerator:
         for pid in player_ids_out:
             name = ""
             pos = "Unknown"
+            team_id = None
+            team_name = ""
             if metadata is not None and "player_id" in metadata.columns:
                 rows = metadata[metadata["player_id"] == pid]
                 if len(rows) > 0:
-                    name = str(rows.iloc[0].get("player_name", ""))
-                    pos = str(rows["position_name"].mode().iloc[0])
+                    name = _clean_name(str(rows.iloc[0].get("player_name", "")))
+                    pos_mode = rows["position_name"].mode()
+                    pos = str(pos_mode.iloc[0]) if len(pos_mode) > 0 else "Unknown"
+                    if "team_id" in rows.columns:
+                        team_mode = rows["team_id"].mode()
+                        if len(team_mode) > 0 and pd.notna(team_mode.iloc[0]):
+                            team_id = int(team_mode.iloc[0])
+                    if "team_name" in rows.columns:
+                        team_name_mode = rows["team_name"].mode()
+                        if len(team_name_mode) > 0 and pd.notna(team_name_mode.iloc[0]):
+                            team_name = str(team_name_mode.iloc[0])
             info_rows.append({
                 "player_id": pid,
                 "player_name": name,
                 "position_name": pos,
                 "n_possessions": len(player_embeddings[pid]),
+                "team_id": team_id,
+                "team_name": team_name,
             })
 
         player_info = pd.DataFrame(info_rows)
@@ -157,10 +186,25 @@ class EmbeddingGenerator:
         Z: np.ndarray,
         player_info: pd.DataFrame,
         output_dir: str,
+        checkpoint_path: Optional[Path] = None,
+        graphs_filename: Optional[str] = None,
+        split_context_edges: Optional[bool] = None,
+        tag: str = "",
+        inference_split: str = "all",
     ) -> None:
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
 
         np.save(str(out / "player_embeddings.npy"), Z)
         player_info.to_parquet(str(out / "player_info.parquet"), index=False)
+        if checkpoint_path is not None and graphs_filename is not None and split_context_edges is not None:
+            manifest = build_manifest(
+                checkpoint_path=checkpoint_path,
+                embedding_output_dir=out,
+                graphs_filename=graphs_filename,
+                split_context_edges=split_context_edges,
+                tag=tag,
+                inference_split=inference_split,
+            )
+            write_manifest(out, manifest)
         print(f"Saved {Z.shape[0]} player embeddings to {out}/")

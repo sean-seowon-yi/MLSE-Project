@@ -23,6 +23,7 @@ This folder contains phase-by-phase documentation for the player similarity pipe
 | Document | Description |
 |----------|-------------|
 | [DATA_QUALITY.md](DATA_QUALITY.md) | Edge cases, clamping, missing data, integrity notes for Phase 1 |
+| [EVALUATION_RESULTS.md](EVALUATION_RESULTS.md) | Baseline and ablation study results, policy diagnostics, and FIFA comparison |
 | [PLAYER_SIMILARITY_FINAL_PLAN.md](PLAYER_SIMILARITY_FINAL_PLAN.md) | High-level plan and design notes |
 | [FUTURE_IMPROVEMENTS.md](FUTURE_IMPROVEMENTS.md) | SOTA assessment and roadmap of possible improvements (model, training, data, evaluation, ops) |
 

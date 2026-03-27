@@ -211,8 +211,6 @@ class PlayerSimilarityModel(nn.Module):
             z_p[dst] = h_player[src]
             return z_p, *empty
 
-        event_pids = data.event_player_ids  # (E,)
-
         # Deduplicate to one embedding per unique player node in the batch.
         # Within a single graph all acts_in edges from the same player share
         # the same player node, so collapsing by src gives one h_player per

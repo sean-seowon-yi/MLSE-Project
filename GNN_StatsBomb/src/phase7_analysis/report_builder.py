@@ -25,7 +25,8 @@ from ..config import Config, POSITION_GROUPS, validate_graph_config_match
 from ..phase3_graph import PossessionGraphBuilder
 from ..phase3_graph.masking import mask_future_info
 from ..phase4_model import PlayerSimilarityModel
-from ..phase6_inference import SimilaritySearcher
+from ..phase6_inference import SimilaritySearcher, build_gender_map
+from ..phase6_inference.provenance import validate_manifest
 
 from .embedding_viz import compute_pca_coords, plot_pca_global, plot_pca_neighbourhood
 from .situation_comparison import SituationComparator
@@ -75,6 +76,8 @@ class ReportBuilder:
     def _load_model(self, device: torch.device) -> PlayerSimilarityModel:
         model = PlayerSimilarityModel(self.config.model, graph_config=self.config.graph)
         ckpt_path = Path(self.config.training.checkpoint_dir) / "best_model.pt"
+        if not ckpt_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
         ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
         model.load_state_dict(ckpt["model_state_dict"])
         model.to(device)
@@ -143,6 +146,7 @@ class ReportBuilder:
         comparator: SituationComparator,
         pid_to_coord: Dict[int, np.ndarray],
         output_dir: Path,
+        gender_map: Optional[Dict[int, str]] = None,
     ) -> None:
         results = self.searcher.find_similar_players(
             query_player_id=query_pid,
@@ -150,6 +154,7 @@ class ReportBuilder:
             player_info=player_info,
             similarity_matrix=sim_matrix,
             top_k=self.rcfg.top_k_neighbours,
+            gender_map=gender_map,
         )
         if results.empty:
             return
@@ -223,8 +228,22 @@ class ReportBuilder:
     def run(self, output_dir: Optional[Path] = None) -> None:
         """Run the full Phase 7 analysis."""
         if output_dir is None:
-            output_dir = Path(self.config.inference.embedding_output_dir) / "analysis"
+            tag = self.config.tag or "baseline"
+            output_dir = Path("evaluations") / tag / "analysis"
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        emb_dir = Path(self.config.inference.embedding_output_dir)
+        ckpt_path = Path(self.config.training.checkpoint_dir) / "best_model.pt"
+        ok, reason = validate_manifest(
+            output_dir=emb_dir,
+            checkpoint_path=ckpt_path,
+            graphs_filename=self.config.graphs_filename,
+            split_context_edges=self.config.graph.split_context_edges,
+        )
+        if not ok:
+            print(f"Embedding provenance check failed: {reason}")
+            print("Re-run --mode inference for this pipeline/tag before analyze.")
+            return
 
         print("Loading embeddings …")
         Z, player_info = self._load_embeddings()
@@ -256,6 +275,18 @@ class ReportBuilder:
 
         sim_matrix = self.searcher.compute_similarity_matrix(Z)
 
+        print("Building gender map …")
+        try:
+            gender_map = build_gender_map(
+                self.config.data.output_dir,
+                self.config.data.statsbomb_base_path,
+            )
+            print(f"  Gender map: {sum(1 for v in gender_map.values() if v == 'male')} male, "
+                  f"{sum(1 for v in gender_map.values() if v == 'female')} female")
+        except FileNotFoundError as e:
+            print(f"  Warning: could not build gender map ({e}); skipping gender filter.")
+            gender_map = None
+
         print("Computing PCA coordinates …")
         pid_to_coord = compute_pca_coords(Z, player_info)
 
@@ -280,6 +311,7 @@ class ReportBuilder:
                 comparator=comparator,
                 pid_to_coord=pid_to_coord,
                 output_dir=output_dir,
+                gender_map=gender_map,
             )
 
         print(f"\nAll reports saved to {output_dir}")

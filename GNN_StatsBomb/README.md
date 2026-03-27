@@ -24,6 +24,8 @@ This is achieved via:
 
 All phases are orchestrated by `main.py` via a `--mode` CLI.
 
+**Checkpoints & embeddings:** Training and inference write to **tagged subdirectories**, not the project root. The default **baseline** tag uses `checkpoints/baseline/` (e.g. `best_model.pt`, per-epoch checkpoints, `evaluation/`) and `embeddings/baseline/` (e.g. `player_embeddings.npy`, `player_info.parquet`). Other pipeline variants use `checkpoints/{tag}/` and `embeddings/{tag}/` (see `--tag` and related flags). The legacy root-level `checkpoints/best_model.pt` and `embeddings/player_embeddings.npy` paths are no longer used.
+
 ### Phase 1 – Data preparation & feature encoding (`mode=prepare`)
 
 **Files:** `src/data_preparation.py`, `src/feature_encoder.py`
@@ -127,13 +129,13 @@ After training, you can evaluate the **best checkpoint** on the held-out **test 
 - **Action heads**: accuracy and macro F1 for action type, angle bin, and length bin; confusion matrices (saved as PNGs).
 - **Outcome head**: accuracy, BCE, and AUC-ROC for `ends_in_shot` and `ends_in_goal`; ROC curves (saved as PNG).
 
-Outputs are written to `checkpoints/evaluation/`: `test_metrics.json` plus `confusion_matrix_*.png` and `outcome_roc.png`. Run with:
+Outputs are written to `checkpoints/baseline/evaluation/`: `test_metrics.json` plus `confusion_matrix_*.png` and `outcome_roc.png`. Run with:
 
 ```bash
 python main.py --mode evaluate
 ```
 
-Requires Phase 1–3 outputs and a trained checkpoint (`checkpoints/best_model.pt`).
+Requires Phase 1–3 outputs and a trained checkpoint (`checkpoints/baseline/best_model.pt`).
 
 ### Phase 6 – Inference & similarity (`mode=inference`, `mode=search`)
 
@@ -145,8 +147,8 @@ Requires Phase 1–3 outputs and a trained checkpoint (`checkpoints/best_model.p
   - For each player, collects per‑possession actor embeddings and applies the same attention pooling used during training.  
   - Applies a **minimum sample threshold** (e.g. 50 possessions) for stability.  
   - Saves:
-    - `embeddings/player_embeddings.npy` — `Z ∈ ℝ^{n_players × d}`.  
-    - `embeddings/player_info.parquet` — IDs, names, positions, n_possessions.
+    - `embeddings/baseline/player_embeddings.npy` — `Z ∈ ℝ^{n_players × d}`.
+    - `embeddings/baseline/player_info.parquet` — IDs, names, positions, n_possessions.
 
 - `SimilaritySearcher`:
   - Computes cosine similarity over `Z`.  
@@ -171,6 +173,47 @@ Requires Phase 1–3 outputs and a trained checkpoint (`checkpoints/best_model.p
     - PCA plots of the global embedding space with neighbourhoods highlighted.
 
 This phase is how you **interpret and debug** whether similarity aligns with “would act similarly in the same situation.”
+
+### Gender-aware evaluation
+
+All similarity search and evaluation modes automatically filter candidates by gender — male query players only receive male candidates, female queries only receive female candidates. Gender is derived from competition metadata (e.g. Women's World Cup → female). This applies to:
+
+- Similarity search (`--mode search`)
+- Ground-truth evaluation (`--mode ground_truth`)
+- Self-consistency evaluation (`--mode self_consistency`)
+- Policy diagnostic (`--mode policy_diagnostic`)
+- Phase 7 analysis (`--mode analyze`)
+- FIFA stat comparison (`--mode fifa_comparison`)
+
+No special flag is needed; gender filtering is always active.
+
+### FIFA stat comparison (`mode=fifa_comparison`)
+
+Validates the GNN similarity system against external FIFA/EA Sports FC player attributes. Requires matched FIFA CSVs in `FIFA_data/`; build them with `match_fifa_players.py` (name normalization, country aliases, year-based FIFA version mapping).
+
+- Samples 10 male + 10 female players (stratified by position group, random each run).
+- For each, finds the top-1 same-gender substitute via GNN cosine similarity that also has FIFA data.
+- Compares their main stats (Pace, Shooting, Passing, Dribbling, Defending, Physical) and 34 detailed sub-attributes.
+- Generates 4 visualizations: radar chart grid, cosine-sim-vs-stat-diff scatter (with Spearman ρ), per-stat difference breakdown, and an evaluation summary dashboard (position match rate, rating gap histogram, similarity-by-agreement box plot).
+
+Standalone script (same logic): `test_fifa_comparison.py`.
+
+### Unified evaluation pipeline (`mode=full_eval`, `mode=full_eval_all`)
+
+Run all post-training evaluations for one or all pipeline variants in a single command:
+
+```bash
+# Evaluate the baseline pipeline
+python main.py --mode full_eval
+
+# Evaluate a specific tagged pipeline
+python main.py --mode full_eval --tag split_ctx --split_context_edges
+
+# Evaluate ALL four registered pipelines
+python main.py --mode full_eval_all --eval_output_dir ./evaluations
+```
+
+`full_eval` runs: inference → test-set evaluation → ground truth → self-consistency → policy diagnostic → Phase 7 analysis → FIFA comparison. Outputs are saved to `evaluations/{pipeline_name}/` for organized comparison across variants (configurable via `--eval_output_dir`).
 
 ---
 
@@ -206,6 +249,15 @@ python main.py --mode search --player_id <STATS_BOMB_PLAYER_ID>
 # Phase 7 (analysis)
 python main.py --mode analyze
 
+# FIFA stat comparison
+python main.py --mode fifa_comparison
+
+# Run all evaluations for current pipeline
+python main.py --mode full_eval
+
+# Run all evaluations for ALL 4 pipeline variants
+python main.py --mode full_eval_all --eval_output_dir ./evaluations
+
 # Or run Phases 1–6A in one go:
 python main.py --mode full_pipeline
 ```
@@ -233,6 +285,7 @@ python main.py --mode full_pipeline
   - [docs/DATA_QUALITY.md](docs/DATA_QUALITY.md) — Edge cases, clamping, missing 360, role labels.
   - [docs/FUTURE_IMPROVEMENTS.md](docs/FUTURE_IMPROVEMENTS.md) — SOTA assessment and improvement roadmap.
   - [docs/PLAYER_SIMILARITY_FINAL_PLAN.md](docs/PLAYER_SIMILARITY_FINAL_PLAN.md) — High-level plan and design notes.
+  - [docs/EVALUATION_RESULTS.md](docs/EVALUATION_RESULTS.md) — Baseline and ablation study results, policy diagnostics.
 
 These documents are kept consistent with the current implementation and are the best reference when extending or reviewing the system.
 

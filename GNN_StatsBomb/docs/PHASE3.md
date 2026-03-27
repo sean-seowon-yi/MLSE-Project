@@ -75,14 +75,27 @@ Phase 3 converts each possession into a **heterogeneous graph** (`HeteroData`) t
 
 ---
 
+## Graph/config validation
+
+When loading graphs, `validate_graph_config_match()` (in `src/config.py`) checks that the loaded graph file matches the active `--split_context_edges` setting. This prevents silently loading graphs with a single `context_for` edge when the model expects split edges (or vice versa), which would cause incorrect behaviour at training or inference time.
+
+When `--mode build_graphs` is run and a graph file already exists, the builder checks for architecture mismatch and refuses to overwrite graphs with a different edge schema. Use a different `--tag` to create a separate graph file.
+
+---
+
 ## How to run
 
 ```bash
 cd GNN_StatsBomb
+
+# Build graphs (baseline: unified context_for)
 python main.py --mode build_graphs
+
+# Build graphs (split teammate/opponent context edges)
+python main.py --mode build_graphs --tag split_ctx --split_context_edges
 ```
 
-Requires Phase 1 and Phase 2 outputs in `processed_data/`.
+Requires Phase 1 and Phase 2 outputs in `processed_data/`. With `--tag`, the output is `possession_graphs_{tag}.pkl`.
 
 ---
 

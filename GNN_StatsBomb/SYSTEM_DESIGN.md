@@ -38,22 +38,45 @@ From the available competitions/seasons with 360 data: ~51,000 possessions, ~737
 
 ## Pipeline Overview
 
-The system is a 7-phase pipeline:
+The system is a 7-phase pipeline, exposed as CLI modes via `main.py`:
 
 ```
-Phase 1: Data Preparation & Feature Encoding
+Phase 1: Data Preparation & Feature Encoding          --mode prepare
     ↓
-Phase 2: Possession Construction
+Phase 2: Possession Construction                       --mode build_possessions
     ↓
-Phase 3: Heterogeneous Graph Construction
+Phase 3: Heterogeneous Graph Construction              --mode build_graphs
     ↓
 Phase 4: Model Architecture (defined here, instantiated at training)
     ↓
-Phase 5: Training (masked imitation + contrastive learning)
+Phase 5: Training (masked imitation + contrastive)     --mode train
+         Test-set evaluation                           --mode evaluate
     ↓
-Phase 6: Inference (embedding generation + similarity search)
+Phase 6: Embedding generation                          --mode inference
+         Similarity search                             --mode search
+         Pseudo ground-truth evaluation                --mode ground_truth
+         Self-consistency evaluation                   --mode self_consistency
+         Policy diagnostic                             --mode policy_diagnostic
     ↓
-Phase 7: Analysis (situation-level counterfactual comparison)
+Phase 7: Analysis (situation-level comparison)         --mode analyze
+         FIFA stat comparison                          --mode fifa_comparison
+         Full evaluation (single pipeline)             --mode full_eval
+         Full evaluation (all variants)                --mode full_eval_all
+```
+
+`--mode full_pipeline` runs Phases 1→2→3→5→6A end-to-end. Search and evaluation modes require embeddings to already exist.
+
+### Experiment Tagging
+
+The `--tag` flag namespaces Phase 3+ outputs (graphs, checkpoints, embeddings) while sharing Phase 1–2 data. The `--split_context_edges` flag must be passed consistently across all phases of the same experiment (it changes graph structure and model architecture). Combined workflow:
+
+```
+python main.py --mode build_graphs   --tag split_ctx --split_context_edges
+python main.py --mode train          --tag split_ctx --split_context_edges
+python main.py --mode evaluate       --tag split_ctx --split_context_edges
+python main.py --mode inference      --tag split_ctx --split_context_edges
+python main.py --mode ground_truth   --tag split_ctx --split_context_edges
+python main.py --mode analyze        --tag split_ctx --split_context_edges
 ```
 
 ---
@@ -315,17 +338,55 @@ Weight: 0.3.
 
 ### Training Details
 
-- Optimiser: Adam (lr=1e-3, weight_decay=1e-5)
-- Scheduler: ReduceLROnPlateau (factor=0.5, patience=5)
-- Gradient clipping: max_norm=1.0
-- Batch size: 96 possession graphs
-- Data split: 70/15/15 by match_id (prevents leakage — all possessions from a given match go to the same split, so the model cannot memorise match-specific patterns and leak them across train/val/test)
-- Early stopping: patience=15, min_delta=1e-4
-- **Test-set evaluation** (`--mode evaluate`): After training, the best checkpoint can be evaluated on the held-out test set (same split, seed=42). Metrics: action type / angle bin / length bin accuracy and macro F1, plus outcome accuracy, BCE, and AUC-ROC for ends_in_shot and ends_in_goal. Outputs: `checkpoints/evaluation/test_metrics.json` and confusion-matrix and ROC plots. See `docs/PHASE5.md` and `src/phase5_training/evaluator.py`.
+- **Optimiser**: Adam (lr=1e-3, weight_decay=1e-5)
+- **Scheduler**: ReduceLROnPlateau (factor=0.5, patience=5) — monitors `val_supervised` (action + λ_outcome × outcome), which is immune to schedule-induced changes in contrastive/uniformity weights
+- **Gradient clipping**: max_norm=1.0
+- **Batch size**: 96 possession graphs (default random shuffle)
+- **Data split**: 70/15/15 by match_id (prevents leakage — all possessions from a given match go to the same split, so the model cannot memorise match-specific patterns and leak them across train/val/test)
+- **Early stopping**: patience=15, min_delta=1e-4, on `val_supervised`
+
+#### Dual Checkpoint Strategy
+
+The trainer maintains two "best" checkpoints targeting different objectives:
+
+| Checkpoint | Tracks | Purpose |
+|---|---|---|
+| `best_model.pt` | Lowest `val_supervised` (action + λ_outcome × outcome) | Primary checkpoint for inference — optimises supervised accuracy |
+| `best_total_model.pt` | Lowest `val_total` (full multi-objective loss including contrastive + uniformity) | Useful for embedding-space diagnostics where auxiliary losses matter |
+
+Additionally: periodic checkpoints every N epochs (`checkpoint_epoch_{n}.pt`), a `final_model.pt` at the end of training, and a `training_history.json` with per-epoch loss breakdowns (train/val for each loss component + learning rate).
+
+#### Resume from Checkpoint
+
+Training can resume from any checkpoint via `--resume <filename>`, which restores model weights, optimizer state, scheduler state, best-loss tracking, and patience counter. History is also restored so the full training curve is preserved.
+
+#### Player-Aware Batch Sampling (optional)
+
+When `--player_sampling` is set, the standard random-shuffle DataLoader is replaced with `PlayerAwareBatchSampler`, which constructs each batch as K players × M possessions:
+
+- **K** (`players_per_batch`, default 16): distinct players per batch
+- **M** (`possessions_per_player`, default 6): possessions sampled per player
+
+This guarantees that every batch contains multiple possessions per player, ensuring the InfoNCE contrastive loss always has positive pairs. Without this, random shuffling produces batches where most players appear only once, starving the contrastive loss of signal.
+
+When `--player_sampling` is active, the CLI also applies a tuned hyperparameter preset: temperature 0.15, λ_contrast 0.15, λ_pooled 0.5, with cosine annealing enabled for both temperature and pooled uniformity weight.
+
+#### Schedule Annealing (optional)
+
+When enabled (via `--player_sampling` or manual config), the trainer applies cosine annealing per epoch:
+
+- **Temperature**: anneals from `temperature_start` (0.15) to `temperature_end` (0.02) — sharpens the contrastive loss over training
+- **Pooled uniformity weight**: anneals from `pooled_weight_start` (0.10) to `pooled_weight_end` (0.50) — gradually increases the uniformity pressure on pooled embeddings
+
+The `val_supervised` metric used for early stopping and LR scheduling is deliberately immune to these annealing changes, preventing schedule-induced artifacts in convergence decisions.
+
+#### Test-Set Evaluation
+
+After training, the best checkpoint can be evaluated on the held-out test set (`--mode evaluate`, same split, seed=42). Metrics: action type / angle bin / length bin accuracy and macro F1, plus outcome accuracy, BCE, and AUC-ROC for ends_in_shot and ends_in_goal. Outputs: `checkpoints/{tag}/evaluation/test_metrics.json` and confusion-matrix and ROC plots.
 
 ---
 
-## Phase 6: Inference & Similarity Search
+## Phase 6: Inference, Evaluation & Similarity Search
 
 ### 6A: Embedding Generation
 
@@ -338,15 +399,99 @@ For each possession graph in the dataset:
 
 Processing uses mini-batch inference with PyG's `Batch.from_data_list()` for efficiency.
 
-**Output**: `player_embeddings.npy` (n_players × 64), `player_info.parquet`.
+The `--inference_split` flag controls which graphs are used: `all` (default) uses the full corpus, while `train`/`val`/`test` uses the corresponding match-level split (same seed=42 as training). This allows generating embeddings from specific subsets for controlled evaluation.
+
+**Output**: `player_embeddings.npy` (n_players × 64), `player_info.parquet`, `embedding_manifest.json`.
+
+#### Provenance System
+
+Every embedding generation writes an `embedding_manifest.json` alongside the embedding files, recording:
+
+- Checkpoint path and modification timestamp
+- Graphs filename and `split_context_edges` flag
+- Experiment tag and inference split
+
+Downstream modes (`search`, `ground_truth`, `policy_diagnostic`) validate the manifest before running, catching stale embeddings (checkpoint retrained but embeddings not regenerated), graph/checkpoint architecture mismatches, and cross-tag contamination. Staleness is detected by comparing checkpoint and embedding file modification timestamps.
 
 ### 6B: Similarity Search
 
 Given a query player_id:
 
-1. Compute pairwise cosine similarity between all `z_p` vectors
-2. Rank by similarity, with optional filters (position group, minimum possessions, exclude same team)
-3. Return top-k matches
+1. Validate embedding provenance against the current checkpoint
+2. Compute pairwise cosine similarity between all `z_p` vectors
+3. Rank by similarity, with optional filters (position group, minimum possessions, exclude same team)
+4. Return top-k matches
+
+**Gender filtering.** All similarity-based modes (search, ground_truth, self_consistency, policy_diagnostic) automatically filter candidates by gender. Gender is derived from competition metadata (`competitions.json` → `competition_gender`). Male query players only see male candidates; female queries only see female candidates. The `build_gender_map()` utility in `similarity_search.py` constructs this mapping dynamically.
+
+### 6C: Pseudo Ground-Truth Evaluation
+
+Evaluates the embedding space against externally sourced player-similarity pairs drawn from public StatsBomb analysis articles. Each pair has a tier reflecting confidence:
+
+| Tier | Description | Example |
+|---|---|---|
+| 1 | Strong directional expectation | Miedema ↔ Caldentey (93% similarity per StatsBomb) |
+| 2 | Good directional expectation | Kroos ↔ Enzo Fernandez (raw top-5 per StatsBomb) |
+| 3 | Weak / conditional expectation | Kane ↔ Leao (conditional on altered weighting) |
+
+For each pair (A, B):
+
+1. Compute cosine similarity between `z_A` and `z_B`
+2. Find B's rank in A's nearest-neighbour list (and vice versa)
+
+Aggregate metrics: mean/median rank, hit@5/10/20/50, per-tier breakdowns, and bootstrap 95% confidence intervals on mean rank and hit@10.
+
+**Output**: `ground_truth_report.txt`, `ground_truth_results.json` (with run provenance appended).
+
+### 6D: Self-Consistency Evaluation
+
+Tests whether the model assigns stable player identity by checking if the same player, observed in different data subsets, retrieves themselves as the closest match. Two complementary tests:
+
+**Competition-split test**: For players appearing in ≥2 competitions with sufficient possessions in each, pool `h_player` embeddings per competition independently, and check self-retrieval rank. Non-testable players whose total possessions meet the threshold are added to the retrieval gallery as distractors, so that ranks reflect the full inference-time search population.
+
+**Random-half test**: For all players with ≥100 possessions (regardless of competition count), randomly split possessions 50/50, pool each half, and check self-retrieval rank. This tests embedding stability without the confound of competition context shift.
+
+Both tests report: self-cosine (mean/median/std), cross-cosine, cosine margin, self-retrieval ranks (mean/median, hit@1/5/10/20/50), and per-position-group breakdowns.
+
+**Output**: `self_consistency_report.txt`, `self_consistency_results.json`.
+
+### 6E: Policy Diagnostic
+
+Three diagnostics testing whether cosine similarity corresponds to actual behavioral similarity:
+
+**1. Policy Distance Correlation**: Sample canonical game situations (stratified by actor position group), compute predicted action distributions for all players via FiLM conditioning, measure pairwise Jensen-Shannon divergence, and correlate with pairwise cosine distance using within-group Spearman ρ. Statistical significance is assessed via Mantel-style row-permutation tests (not parametric, because distance-matrix pairs share players and violate i.i.d. assumptions), with Holm-Bonferroni correction across group-level tests.
+
+**2. Substitute Quality**: For a set of query players (mixed: ~half top-possession, ~half random per position group), compare the behavioral similarity (mean JS divergence of predicted action distributions) of their top-K cosine neighbours versus K random same-position-group players. A ratio > 1 means cosine retrieval finds better behavioral matches than chance. Reports bootstrap 95% CI on the aggregate ratio.
+
+**3. FiLM Sensitivity**: For each player, replace their `z_p` with a random same-group player's `z_p` (guaranteed derangement — no identity permutations) and measure JS divergence against the correct predictions. High JS means FiLM is load-bearing and `z_p` genuinely modulates predictions.
+
+**Output**: `policy_diagnostic_report.txt`, `policy_diagnostic_results.json`.
+
+### 6F: FIFA Stat Comparison (`--mode fifa_comparison`)
+
+Validates the GNN similarity system against external FIFA/EA Sports FC player attributes. Requires pre-matched FIFA CSVs in `FIFA_data/` (generated by `match_fifa_players.py`).
+
+1. Sample 10 male + 10 female players (stratified by position group, random each run).
+2. For each sampled player, find the top-1 same-gender substitute via GNN cosine similarity (must also have FIFA data).
+3. Compare main stats (Pace, Shooting, Passing, Dribbling, Defending, Physical) and 34 detailed sub-attributes.
+4. Compute Spearman correlation between cosine similarity and mean stat difference.
+5. Generate 4 visualizations: radar chart grid, similarity-vs-stat-diff scatter, per-stat breakdown, evaluation summary dashboard.
+
+**Output**: `test_fifa_comparison.txt` (text report), `radar_comparison.png`, `similarity_vs_stat_diff.png`, `stat_difference_breakdown.png`, `evaluation_summary.png`.
+
+### Unified Evaluation Pipeline (`--mode full_eval`, `--mode full_eval_all`)
+
+A `PIPELINE_REGISTRY` in `main.py` defines all four pipeline variants (baseline, `player_samp`, `split_ctx`, `split_ctx_ps`). The `full_eval` mode runs the complete evaluation suite for the current pipeline:
+
+1. Inference (generate embeddings)
+2. Test-set evaluation (accuracy, F1, confusion matrices)
+3. Ground-truth pair evaluation
+4. Self-consistency evaluation
+5. Policy diagnostic
+6. Phase 7 analysis
+7. FIFA stat comparison
+
+`full_eval_all` iterates through all registered pipelines. All outputs are saved to `evaluations/{pipeline_name}/{step_name}/` for organized comparison. The output directory is configurable via `--eval_output_dir` (default `./evaluations`).
 
 ---
 
@@ -430,24 +575,57 @@ For these reasons, score is not included. If future analysis suggests score cont
 
 ## Key Configuration
 
+All configuration is defined in `src/config.py` as nested dataclasses (`DataConfig`, `FeatureConfig`, `PossessionConfig`, `GraphConfig`, `ModelConfig`, `TrainingConfig`, `InferenceConfig`) wrapped in a master `Config`. There is no external YAML/JSON config file — runtime overrides are passed via CLI flags.
+
+### Model & Loss
+
 | Parameter | Value | Description |
 |---|---|---|
 | `latent_dim` | 64 | Embedding dimensionality |
 | `num_layers` | 2 | GNN depth |
 | `num_heads` | 4 | Attention heads in layer 1 |
 | `hidden_dim` | 128 | Per-head hidden dimension |
+| `position_embed_dim` | 16 | Position embedding dimension (player node + FiLM) |
 | `n_action_types` | 14 | Action type classes |
 | `n_angle_bins` | 9 | Direction bins (8 sectors + no-angle) |
 | `n_length_bins` | 5 | Displacement magnitude bins |
+| `dropout` | 0.1 | GNN layer dropout |
+| `focal_gamma` | 2.0 | Focal loss focusing parameter |
+
+### Training
+
+| Parameter | Default | Description |
+|---|---|---|
+| `batch_size` | 96 | Training batch size (random shuffle mode) |
+| `learning_rate` | 1e-3 | Adam learning rate |
+| `weight_decay` | 1e-5 | Adam weight decay |
+| `lambda_outcome` | 0.5 | Outcome loss weight |
 | `lambda_contrast` | 0.5 | Contrastive loss weight (h_player InfoNCE) |
 | `lambda_pooled_contrast` | 0.3 | Pooled uniformity loss weight (z_p) |
-| `lambda_outcome` | 0.5 | Outcome loss weight |
-| `temperature` | 0.05 | InfoNCE temperature |
+| `contrastive_temperature` | 0.05 | InfoNCE temperature |
 | `uniformity_t` | 2.0 | Gaussian-potential uniformity sensitivity |
-| `focal_gamma` | 2.0 | Focal loss focusing parameter |
+| `patience` | 15 | Early stopping patience |
+| `save_every_n_epochs` | 10 | Periodic checkpoint interval |
+
+### Player-Aware Sampling (when `--player_sampling`)
+
+| Parameter | Default | Description |
+|---|---|---|
+| `players_per_batch` | 16 | Distinct players per batch (K) |
+| `possessions_per_player` | 6 | Possessions per player per batch (M) |
+| `contrastive_temperature` | 0.15 | Override: warmer start for sampling mode |
+| `lambda_contrast` | 0.15 | Override: reduced contrastive weight |
+| `lambda_pooled_contrast` | 0.5 | Override: increased uniformity weight |
+| `temperature_start → end` | 0.15 → 0.02 | Cosine-annealed temperature |
+| `pooled_weight_start → end` | 0.10 → 0.50 | Cosine-annealed uniformity weight |
+
+### Inference
+
+| Parameter | Value | Description |
+|---|---|---|
 | `min_samples_per_player` | 50 | Minimum possessions for embedding |
-| `batch_size` | 96 | Training batch size |
-| `learning_rate` | 1e-3 | Adam learning rate |
+| `top_k` | 10 | Default number of neighbours returned |
+| `similarity_metric` | cosine | Similarity metric for search |
 
 ---
 
@@ -582,8 +760,12 @@ The following issues were identified during a full code audit and corrected:
 ```
 GNN_StatsBomb/
 ├── main.py                          # CLI entry point for all phases
+├── match_fifa_players.py            # FIFA-StatsBomb player matcher
+├── test_fifa_comparison.py          # FIFA stat comparison & visualizations
+├── requirements.txt                 # Python dependencies (torch, torch-geometric, etc.)
+├── SYSTEM_DESIGN.md                 # This document
 ├── src/
-│   ├── config.py                    # All configuration and vocabularies
+│   ├── config.py                    # All configuration, vocabularies, tag/graph validation
 │   ├── data_preparation.py          # Phase 1A: StatsBomb JSON loading
 │   ├── feature_encoder.py           # Phase 1B: 126-D feature encoding
 │   ├── phase2_possession/
@@ -597,13 +779,19 @@ GNN_StatsBomb/
 │   │   ├── projections.py           # Event and player feature projections
 │   │   └── pooling.py               # Attention-weighted pooling
 │   ├── phase5_training/
-│   │   ├── trainer.py               # Training loop with early stopping
-│   │   ├── losses.py                # Focal, contrastive, combined losses
-│   │   ├── dataset.py               # PyG dataset with masking + targets
-│   │   └── action_targets.py        # Discretise actions into bins
+│   │   ├── trainer.py               # Training loop with early stopping + dual checkpoints
+│   │   ├── losses.py                # Focal, contrastive, uniformity, combined losses
+│   │   ├── dataset.py               # PyG dataset with masking + targets + match-level split
+│   │   ├── action_targets.py        # Discretise actions into bins
+│   │   ├── evaluator.py             # Test-set evaluation (metrics + plots)
+│   │   └── sampler.py               # PlayerAwareBatchSampler for contrastive batching
 │   ├── phase6_inference/
 │   │   ├── embedding_generator.py   # Batched z_p generation
-│   │   └── similarity_search.py     # Cosine similarity top-k search
+│   │   ├── similarity_search.py     # Cosine similarity top-k search
+│   │   ├── ground_truth.py          # Pseudo ground-truth pair evaluation
+│   │   ├── self_consistency.py      # Competition-split + random-half self-retrieval
+│   │   ├── policy_diagnostic.py     # JS correlation, substitute quality, FiLM sensitivity
+│   │   └── provenance.py            # Embedding manifest build/validate
 │   └── phase7_analysis/
 │       ├── report_builder.py        # Orchestrates full analysis
 │       ├── situation_comparison.py   # Counterfactual action prediction
@@ -612,12 +800,39 @@ GNN_StatsBomb/
 │   ├── README.md                    # Docs index
 │   ├── PHASE1.md … PHASE7.md       # One file per phase
 │   ├── DATA_QUALITY.md              # Data quality notes
-│   ├── FUTURE_IMPROVEMENTS.md        # SOTA assessment and improvement roadmap
+│   ├── EVALUATION_RESULTS.md        # Baseline evaluation results and analysis
+│   ├── FUTURE_IMPROVEMENTS.md       # SOTA assessment and improvement roadmap
 │   └── PLAYER_SIMILARITY_FINAL_PLAN.md  # Original design plan
 ├── processed_data/                  # Phase 1–3 outputs
+│   ├── event_features.npy           # (N, 126) feature matrix
+│   ├── event_metadata.parquet       # Per-event metadata
+│   ├── freeze_frames.pkl            # 360 freeze frames for graph construction
+│   ├── feature_names.json           # Human-readable feature dimension names
+│   ├── data_stats.json              # Dataset statistics
+│   ├── possessions.pkl              # Phase 2 output
+│   ├── possession_graphs.pkl        # Phase 3 output (baseline)
+│   └── possession_graphs_{tag}.pkl  # Phase 3 output (tagged experiment)
 ├── checkpoints/                     # Trained model weights
-└── embeddings/
-    ├── player_embeddings.npy        # (n_players, 64)
-    ├── player_info.parquet          # Player metadata
-    └── analysis/                    # Phase 7 reports and plots
+│   ├── baseline/                    # Baseline pipeline checkpoints
+│   │   ├── best_model.pt            # Best val_supervised checkpoint
+│   │   ├── best_total_model.pt      # Best val_total checkpoint
+│   │   ├── final_model.pt           # End-of-training checkpoint
+│   │   ├── training_history.json    # Per-epoch loss curves
+│   │   └── evaluation/              # Test-set metrics + plots
+│   └── {tag}/                       # Tagged experiment checkpoints (same structure)
+├── embeddings/                      # Embedding outputs
+│   ├── baseline/                    # Baseline pipeline embeddings
+│   │   ├── player_embeddings.npy    # (n_players, 64)
+│   │   ├── player_info.parquet      # Player metadata
+│   │   ├── embedding_manifest.json  # Provenance (checkpoint, graphs, config)
+│   │   └── analysis/                # Phase 7 reports, plots, PCA
+│   └── {tag}/                       # Tagged experiment embeddings (same structure)
+└── evaluations/                     # Unified evaluation outputs (generated)
+    └── {pipeline_name}/             # Per-pipeline evaluation results
+        ├── test_metrics/            # Accuracy, F1, confusion matrices
+        ├── ground_truth/            # Ground-truth pair evaluation
+        ├── self_consistency/        # Self-consistency evaluation
+        ├── policy_diagnostic/       # Policy diagnostic results
+        ├── analysis/                # Phase 7 analysis
+        └── fifa_comparison/         # FIFA stat comparison + visualizations
 ```

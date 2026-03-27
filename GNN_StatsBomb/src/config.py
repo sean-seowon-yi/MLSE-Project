@@ -326,7 +326,7 @@ class TrainingConfig:
     patience: int = 15
     min_delta: float = 1e-4
 
-    checkpoint_dir: str = "./checkpoints"
+    checkpoint_dir: str = "./checkpoints/baseline"
     save_every_n_epochs: int = 10
 
     train_ratio: float = 0.7
@@ -352,7 +352,7 @@ class TrainingConfig:
 class InferenceConfig:
     """Phase 6: inference and similarity search parameters."""
 
-    embedding_output_dir: str = "./embeddings"
+    embedding_output_dir: str = "./embeddings/baseline"
     min_samples_per_player: int = 50
     top_k: int = 10
     similarity_metric: str = "cosine"
@@ -378,8 +378,7 @@ class Config:
     def apply_tag(self, tag: str) -> None:
         """Namespace Phase 3+ outputs under *tag*, leaving Phase 1-2 shared.
 
-        With no tag the default paths are unchanged, preserving any
-        existing baseline run.  When a tag is provided:
+        Replaces the leaf directory (default ``baseline``) with *tag*:
           - Graphs file becomes ``possession_graphs_{tag}.pkl``
           - Checkpoints  → ``checkpoints/{tag}/``
           - Embeddings   → ``embeddings/{tag}/``
@@ -388,10 +387,10 @@ class Config:
             return
         self.tag = tag
         self.training.checkpoint_dir = str(
-            Path(self.training.checkpoint_dir) / tag
+            Path(self.training.checkpoint_dir).parent / tag
         )
         self.inference.embedding_output_dir = str(
-            Path(self.inference.embedding_output_dir) / tag
+            Path(self.inference.embedding_output_dir).parent / tag
         )
 
     @property

@@ -22,7 +22,7 @@ import torch.nn.functional as F
 
 def _inverse_sqrt_weights(counts: List[int]) -> torch.Tensor:
     """Compute class weights proportional to 1/sqrt(count), normalised to mean 1."""
-    inv = [1.0 / math.sqrt(c) for c in counts]
+    inv = [1.0 / math.sqrt(max(c, 1)) for c in counts]
     s = sum(inv)
     n = len(counts)
     return torch.tensor([v / s * n for v in inv], dtype=torch.float32)
@@ -56,9 +56,12 @@ class FocalLoss(nn.Module):
             self.weight = None
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        ce = F.cross_entropy(logits, targets, weight=self.weight, reduction="none")
+        ce = F.cross_entropy(logits, targets, reduction="none")
         p_t = torch.exp(-ce)
         focal = ((1 - p_t) ** self.gamma) * ce
+        if self.weight is not None:
+            alpha_t = self.weight.to(logits.device).gather(0, targets)
+            focal = alpha_t * focal
         return focal.mean()
 
 
@@ -160,10 +163,10 @@ class ContrastiveLoss(nn.Module):
         neg_mask.fill_diagonal_(0.0)
 
         # If an anchor has zero valid negatives in its group, fall back to
-        # all-player negatives for that row to avoid -inf in logsumexp.
+        # all different-player negatives for that row to avoid -inf in logsumexp.
         has_neg = neg_mask.sum(dim=-1) > 0
         if not has_neg.all():
-            fallback = torch.ones_like(sim)
+            fallback = (1.0 - (pid == pid.T).float())
             fallback.fill_diagonal_(0.0)
             neg_mask = torch.where(
                 has_neg.unsqueeze(-1), neg_mask, fallback,

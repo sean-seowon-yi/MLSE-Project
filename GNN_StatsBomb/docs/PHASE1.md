@@ -110,13 +110,19 @@ Configuration (e.g. in `src/config.py`):
 
 ---
 
-## Relation to player similarity
+## Relation to other phases
 
-Phase 1 produces **event-level** features and metadata. The metadata includes **`player_id`** for every event. A later phase will use these outputs to build **player-level** representations (e.g. by aggregating event vectors per player) and then compute player similarity. See the main **README.md** and **Integrity & domain** in `docs/DATA_QUALITY.md` for how 360 and sidedness (left/right roles distinct by default) support this goal.
+Phase 1 produces **event-level** features and metadata. These are consumed by:
+
+- **Phase 2**: Groups events into possession sequences using `event_metadata.parquet`.
+- **Phase 3**: Builds heterogeneous graphs using `event_features.npy`, `event_metadata.parquet`, and `freeze_frames.pkl`.
+- **Phase 5/6**: Runtime masking zeroes out action/identity fields from the 126-D vector; only situational features survive.
 
 ---
 
 ## See also
 
-- **README.md** — Setup, usage, configuration, feature summary.
-- **docs/DATA_QUALITY.md** — Edge cases, clamping, missing data, and integrity/domain notes.
+- [../SYSTEM_DESIGN.md](../SYSTEM_DESIGN.md) — Phase 1 section (feature table, masking rationale).
+- [PHASE2.md](PHASE2.md) — Possession construction.
+- [PHASE3.md](PHASE3.md) — Graph construction.
+- [DATA_QUALITY.md](DATA_QUALITY.md) — Edge cases, clamping, missing data, and integrity/domain notes.

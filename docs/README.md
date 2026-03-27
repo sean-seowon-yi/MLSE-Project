@@ -25,6 +25,7 @@ Pipeline-specific docs live inside each GNN subfolder.
   - [GNN_StatsBomb/docs/README.md](../GNN_StatsBomb/docs/README.md) — Index of all phase docs (PHASE1–PHASE7) and related references.
   - [GNN_StatsBomb/docs/DATA_QUALITY.md](../GNN_StatsBomb/docs/DATA_QUALITY.md) — Data quality, missing data, edge cases.
   - [GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md](../GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md) — SOTA assessment, critical vulnerabilities & blind spots, improvement roadmap.
+  - [GNN_StatsBomb/docs/EVALUATION_RESULTS.md](../GNN_StatsBomb/docs/EVALUATION_RESULTS.md) — Baseline and ablation study results, policy diagnostics, and FIFA comparison.
 
 Together with the root [README.md](../README.md), these give a complete picture of what the system does (player similarity by behaviour in context) and how each phase is implemented.
 

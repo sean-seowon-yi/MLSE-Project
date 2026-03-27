@@ -74,6 +74,7 @@ class Trainer:
         ).to(self.device)
 
         self.best_val_loss = float("inf")
+        self.best_val_total = float("inf")
         self.patience_counter = 0
         self.history: Dict[str, list] = {
             "train_total": [],
@@ -190,20 +191,48 @@ class Trainer:
             if val_supervised < self.best_val_loss - self.config.min_delta:
                 self.best_val_loss = val_supervised
                 self.patience_counter = 0
-                self._save_checkpoint("best_model.pt", epoch, val_supervised)
+                self._save_checkpoint(
+                    "best_model.pt",
+                    epoch,
+                    val_supervised=val_supervised,
+                    val_total=val_losses["total"],
+                )
                 print("  [New best model saved]")
             else:
                 self.patience_counter += 1
                 print(f"  [No improvement for {self.patience_counter} epochs]")
 
+            # Secondary checkpoint aligned with full multi-objective loss.
+            # This is useful for embedding-space diagnostics where auxiliary
+            # losses (contrastive/uniformity) matter.
+            if val_losses["total"] < self.best_val_total - self.config.min_delta:
+                self.best_val_total = val_losses["total"]
+                self._save_checkpoint(
+                    "best_total_model.pt",
+                    epoch,
+                    val_supervised=val_supervised,
+                    val_total=val_losses["total"],
+                )
+                print("  [New best total-loss model saved]")
+
             if (epoch + 1) % self.config.save_every_n_epochs == 0:
-                self._save_checkpoint(f"checkpoint_epoch_{epoch + 1}.pt", epoch, val_supervised)
+                self._save_checkpoint(
+                    f"checkpoint_epoch_{epoch + 1}.pt",
+                    epoch,
+                    val_supervised=val_supervised,
+                    val_total=val_losses["total"],
+                )
 
             if self.patience_counter >= self.config.patience:
                 print(f"\nEarly stopping after {epoch + 1} epochs.")
                 break
 
-        self._save_checkpoint("final_model.pt", last_epoch, last_val_loss)
+        self._save_checkpoint(
+            "final_model.pt",
+            last_epoch,
+            val_supervised=last_val_loss,
+            val_total=self.history["val_total"][-1] if self.history["val_total"] else last_val_loss,
+        )
         self._save_history()
         return self.history
 
@@ -347,31 +376,48 @@ class Trainer:
 
     # ── Persistence ──────────────────────────────────────────────────
 
-    def _save_checkpoint(self, filename: str, epoch: int, val_loss: float):
+    def _save_checkpoint(
+        self,
+        filename: str,
+        epoch: int,
+        val_supervised: float,
+        val_total: Optional[float] = None,
+    ):
         path = self.checkpoint_dir / filename
+        if val_total is None:
+            val_total = val_supervised
         torch.save({
             "epoch": epoch,
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "scheduler_state_dict": self.scheduler.state_dict(),
-            "val_loss": val_loss,
+            # Keep val_loss for backward compatibility with existing scripts.
+            "val_loss": val_supervised,
+            "val_supervised": val_supervised,
+            "val_total": val_total,
             "best_val_loss": self.best_val_loss,
+            "best_val_total": self.best_val_total,
             "patience_counter": self.patience_counter,
             "history": self.history,
         }, path)
 
     def load_checkpoint(self, filename: str) -> Tuple[int, float]:
-        path = self.checkpoint_dir / filename
+        user_path = Path(filename)
+        if user_path.is_absolute() or user_path.exists():
+            path = user_path
+        else:
+            path = self.checkpoint_dir / filename
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         self.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
         self.best_val_loss = ckpt["best_val_loss"]
+        self.best_val_total = ckpt.get("best_val_total", float("inf"))
         self.patience_counter = ckpt.get("patience_counter", 0)
         saved_history = ckpt.get("history")
         if saved_history and isinstance(saved_history, dict):
             self.history = saved_history
-        return ckpt["epoch"], ckpt["val_loss"]
+        return ckpt["epoch"], ckpt.get("val_supervised", ckpt["val_loss"])
 
     def _save_history(self):
         path = self.checkpoint_dir / "training_history.json"

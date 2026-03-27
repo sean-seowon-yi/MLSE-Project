@@ -80,7 +80,7 @@ class PlayerAwareBatchSampler(Sampler[List[int]]):
             if len(player_pool) < self.K:
                 fresh = list(self.player_ids)
                 rng.shuffle(fresh)
-                player_pool.extend(fresh)
+                player_pool = fresh
 
             chosen = player_pool[:self.K]
             player_pool = player_pool[self.K:]

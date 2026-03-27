@@ -42,6 +42,7 @@ Both pipelines ultimately produce:
 | [GNN_StatsBomb/docs/DATA_QUALITY.md](GNN_StatsBomb/docs/DATA_QUALITY.md) | Data quality, edge cases, clamping, missing 360. |
 | [GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md](GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md) | SOTA assessment, critical vulnerabilities & blind spots, and improvement roadmap. |
 | [GNN_StatsBomb/docs/PLAYER_SIMILARITY_FINAL_PLAN.md](GNN_StatsBomb/docs/PLAYER_SIMILARITY_FINAL_PLAN.md) | Original high-level plan and design notes. |
+| [GNN_StatsBomb/docs/EVALUATION_RESULTS.md](GNN_StatsBomb/docs/EVALUATION_RESULTS.md) | Baseline and ablation evaluation results, policy diagnostics, and FIFA comparison. |
 
 ---
 
@@ -80,6 +81,8 @@ Project/
 │   ├── README.md
 │   ├── SYSTEM_DESIGN.md      # Full system design & rationale
 │   ├── main.py               # Multi-phase CLI (Phases 1–7 + evaluate)
+│   ├── match_fifa_players.py    # FIFA-StatsBomb player matcher
+│   ├── test_fifa_comparison.py  # FIFA stat comparison & visualizations
 │   ├── requirements.txt
 │   ├── docs/
 │   │   ├── README.md         # Docs index & phase links
@@ -96,12 +99,14 @@ Project/
 │   │   ├── phase5_training/      # Losses, dataset, trainer
 │   │   ├── phase6_inference/     # z_p generation + similarity search
 │   │   └── phase7_analysis/      # Situation-level counterfactual analysis
-│   ├── checkpoints/          # Model checkpoints (generated)
-│   ├── embeddings/           # Player embeddings, reports, PCA plots (generated)
+│   ├── checkpoints/{tag}/     # Model checkpoints per pipeline variant (generated)
+│   ├── embeddings/{tag}/      # Player embeddings, reports, PCA plots per variant (generated)
+│   ├── evaluations/         # Unified evaluation outputs (generated)
 │   └── processed_data/       # Encoded events, possessions, graphs (generated)
 │
 ├── progress_reports/        # Project progress reports (e.g. milestone PDFs)
 ├── assets/                   # Media (e.g. sample videos; not tracked)
+├── FIFA_data/               # FIFA/EA Sports FC matched player data (local only; not tracked)
 ├── SkillCorner/              # SkillCorner data (local only; not tracked)
 └── StatsBomb/                # StatsBomb data (local only; not tracked)
 ```
@@ -160,7 +165,7 @@ This will:
 
 Optional after training:
 
-- **evaluate** — run the best checkpoint on the held-out test set; reports accuracy, macro F1, and outcome metrics, and saves confusion matrices and ROC curves to `checkpoints/evaluation/`.
+- **evaluate** — run the best checkpoint on the held-out test set; reports accuracy, macro F1, and outcome metrics, and saves confusion matrices and ROC curves to `checkpoints/{tag}/evaluation/`.
 
 Once embeddings exist, you can:
 
@@ -169,6 +174,16 @@ Once embeddings exist, you can:
 ```bash
 python main.py --mode search --player_id <STATS_BOMB_PLAYER_ID>
 ```
+
+Similarity search is **gender-aware**: male query players only retrieve male candidates, and female queries only female candidates.
+
+**Run full evaluation for all pipeline variants:**
+
+```bash
+python main.py --mode full_eval_all --eval_output_dir ./evaluations
+```
+
+This evaluates all four pipeline variants (baseline, split-context, player-sampling, combined) and saves organized results under `evaluations/{pipeline_name}/`.
 
 **Run situation-level analysis (Phase 7):**
 
@@ -181,9 +196,15 @@ Phase 7:
 - Picks query players and their nearest neighbours in embedding space.  
 - Samples real game situations (events) from the query player.  
 - For each situation, compares **predicted action distributions** (type, direction, length) of the query vs candidates, holding the state fixed.  
-- Saves text reports and visualisations under `GNN_StatsBomb/embeddings/analysis/`:  
+- Saves text reports and visualisations under `GNN_StatsBomb/embeddings/{tag}/analysis/`:  
   - **Bar charts** — action-type and direction (angle-bin) probabilities per situation.  
   - **PCA plots** — global embedding space in three variants (by position group, by subgroup, by full position), plus per-query neighbourhood views (query and top-k highlighted).
+
+**FIFA stat comparison (validates similarity against FIFA player attributes):**
+
+```bash
+python main.py --mode fifa_comparison
+```
 
 For full design details (data, model, loss functions, masking, graph structure, assumptions), see:
 
@@ -214,6 +235,13 @@ For full design details (data, model, loss functions, masking, graph structure, 
 - Regular event data provides event type, locations, outcomes, xG, pressure, etc.
 - 360 adds a per-event **freeze frame**: positions of visible teammates, opponents, and keeper.  
   This is critical for defining the *situation* (pressure, options, density) behind each action.
+
+### FIFA / EA Sports FC
+
+- External player attribute data from EA Sports FC (FIFA) game series.
+- Downloaded separately and placed under `FIFA_data/` (not tracked in git).
+- `match_fifa_players.py` matches StatsBomb 360 players to FIFA data by name, country, and year.
+- Used by `test_fifa_comparison.py` to validate GNN similarity search against FIFA player attributes.
 
 ### Shared data docs
 
@@ -278,6 +306,9 @@ Across both pipelines, the core goals are:
 
 - **Player-level aggregation & similarity**:  
   Per-possession player embeddings are pooled with **attention** to form global `z_p` vectors. Similarity search is then simple cosine similarity in this embedding space, with filters on position group and sample size for robustness.
+
+- **Gender-aware evaluation**:
+  All similarity search, ground truth, self-consistency, and policy diagnostic evaluations filter candidates by gender, ensuring male players are only compared to males and female players to females.
 
 The **StatsBomb 360** pipeline is the most faithful implementation of the “same situation, same action” notion and is documented in detail in `GNN_StatsBomb/SYSTEM_DESIGN.md`. Use that file alongside this README when working on or extending the system.
 

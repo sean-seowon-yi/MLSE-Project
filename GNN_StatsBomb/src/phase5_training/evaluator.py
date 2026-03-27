@@ -26,7 +26,7 @@ def _aggregate_outcome_logits(
     batch_vec: torch.Tensor,
     n_poss: int,
     device: torch.device,
-) -> torch.Tensor:
+) -> np.ndarray:
     """Scatter-mean per possession (same logic as trainer)."""
     outcome_logits = outcome_logits.to(device)
     batch_vec = batch_vec.to(device)

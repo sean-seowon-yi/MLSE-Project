@@ -378,6 +378,56 @@ StatsBomb/
 
 ---
 
+## FIFA / EA Sports FC Data
+
+### Source
+EA Sports FC (formerly FIFA) player attribute data. These files are downloaded externally and are not included in the repository.
+
+### Purpose
+Used to **validate** the GNN player similarity system by comparing the FIFA stats of a query player and their GNN-recommended substitute. If the GNN correctly identifies similar players, their FIFA attribute profiles should also be similar.
+
+### Directory Structure
+```
+FIFA_data/
+├── male_players.csv                       # Raw FIFA male player data (downloaded)
+├── female_players.csv                     # Raw FIFA female player data (downloaded)
+├── statsbomb_male_players_fifa.csv        # Matched: StatsBomb male players → FIFA stats
+├── statsbomb_female_players_fifa.csv      # Matched: StatsBomb female players → FIFA stats
+├── unmatched_players.txt                  # StatsBomb 360 players not found in FIFA data
+├── test_fifa_comparison.txt               # Text report from comparison test
+├── radar_comparison.png                   # Query vs substitute stat profile radar charts
+├── similarity_vs_stat_diff.png            # Cosine similarity vs FIFA stat difference scatter
+├── stat_difference_breakdown.png          # Per-attribute mean absolute difference bars
+└── evaluation_summary.png                 # Position match rate, rating gap, agreement boxplots
+```
+
+### Matching Process
+
+`GNN_StatsBomb/match_fifa_players.py` links StatsBomb 360 players to FIFA data using:
+
+- **Name normalization**: Unicode NFKD decomposition, accent stripping, hyphen/space handling.
+- **Country aliases**: Maps variations (e.g. "Korea Republic" ↔ "Korea DPR" ↔ "South Korea").
+- **Competition-to-FIFA-version mapping**: Aligns StatsBomb season years to the correct FIFA game release.
+- **Multi-stage fuzzy matching**: Exact match → subsequence → SequenceMatcher with configurable thresholds.
+- **Post-match deduplication**: Ensures one-to-one mapping.
+
+Outputs: `statsbomb_male_players_fifa.csv`, `statsbomb_female_players_fifa.csv`, `unmatched_players.txt`.
+
+### Key FIFA Attributes
+
+| Group | Attributes |
+|-------|-----------|
+| **Main 6** | Pace, Shooting, Passing, Dribbling, Defending, Physical |
+| **Attacking** | Crossing, Finishing, Heading Accuracy, Short Passing, Volleys |
+| **Skill** | Dribbling, Curve, FK Accuracy, Long Passing, Ball Control |
+| **Movement** | Acceleration, Sprint Speed, Agility, Reactions, Balance |
+| **Power** | Shot Power, Jumping, Stamina, Strength, Long Shots |
+| **Mentality** | Aggression, Interceptions, Positioning, Vision, Penalties, Composure |
+| **Defending** | Marking Awareness, Standing Tackle, Sliding Tackle |
+| **Goalkeeping** | Diving, Handling, Kicking, Positioning, Reflexes |
+
+---
+
 ## Data Comparison
 
 | Feature | SkillCorner | StatsBomb |

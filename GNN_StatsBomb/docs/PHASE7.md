@@ -29,7 +29,7 @@ Analysis behaviour is controlled by `ReportConfig` in `report_builder.py`:
 
 ## Outputs
 
-All artifacts are written under `embeddings/analysis/`.
+All artifacts are written under `embeddings/{tag}/analysis/` (or `embeddings/baseline/analysis/` for the baseline run).
 
 - **Text reports**: `report_<player_id>.txt` — per-situation predicted action type, direction, and length distributions for query and candidates.
 - **Bar charts (per situation)**:
@@ -61,10 +61,17 @@ Subgroups are defined in `src/config.py` via `POSITION_SUBGROUPS` (mapping from 
 
 ```bash
 cd GNN_StatsBomb
+
+# Baseline analysis
 python main.py --mode analyze
+
+# With experiment tag
+python main.py --mode analyze --tag split_ctx --split_context_edges
 ```
 
-Requires Phase 6 outputs (embeddings, player_info) and a trained checkpoint; reads possession graphs and event features for h_event and event sampling. Query players are chosen at random (or via config); see `ReportConfig` to fix specific player IDs.
+Requires Phase 6 outputs (embeddings, player_info, embedding_manifest.json) and a trained checkpoint; reads possession graphs and event features for h_event and event sampling. The manifest is validated to ensure embeddings match the current checkpoint. Query players are chosen at random (or via config); see `ReportConfig` to fix specific player IDs.
+
+**Gender-aware analysis.** When finding nearest neighbours for a query player, candidates are automatically filtered to match the query player's gender (derived from competition metadata). This ensures that female players are only compared to females and male players to males.
 
 ---
 

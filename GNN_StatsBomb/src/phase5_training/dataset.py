@@ -139,8 +139,22 @@ def train_val_test_split(
     rng.shuffle(match_ids)
 
     n = len(match_ids)
-    n_train = int(n * train_ratio)
-    n_val = int(n * val_ratio)
+    if n < 3:
+        raise ValueError(
+            "Need at least 3 unique matches for train/val/test split. "
+            f"Found {n}."
+        )
+
+    n_train = max(1, int(n * train_ratio))
+    n_val = max(1, int(n * val_ratio))
+    # Keep at least one match for test.
+    while n_train + n_val > n - 1:
+        if n_train >= n_val and n_train > 1:
+            n_train -= 1
+        elif n_val > 1:
+            n_val -= 1
+        else:
+            break
 
     train_ids = match_ids[:n_train]
     val_ids = match_ids[n_train:n_train + n_val]

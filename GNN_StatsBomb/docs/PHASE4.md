@@ -62,22 +62,39 @@ Outcome uses only h_event (no z_p) because possession outcomes are driven by gam
 
 ---
 
+## Split context edges
+
+When `--split_context_edges` is active, the GNN encoder allocates separate `GATv2Conv` parameters for `context_for_tm` and `context_for_opp` instead of a single `context_for`. The edge type list is determined by `get_edge_types(split_context)` in `gnn_encoder.py`, driven by `GraphConfig.split_context_edges`.
+
+The model constructor accepts an optional `graph_config` parameter to configure this at instantiation time.
+
+---
+
 ## Code
 
 | Component | Location |
 |-----------|----------|
 | Full model (FiLM + heads) | `src/phase4_model/model.py` |
-| GNN encoder | `src/phase4_model/gnn_encoder.py` |
-| Projections | `src/phase4_model/projections.py` |
+| GNN encoder (HeteroConv, edge types) | `src/phase4_model/gnn_encoder.py` |
+| Projections (event, player) | `src/phase4_model/projections.py` |
 | Attention pooling | `src/phase4_model/pooling.py` |
-| Config (dims, heads, etc.) | `src/config.py` |
+| Config (dims, heads, dropout, etc.) | `src/config.py` → `ModelConfig`, `GraphConfig` |
 
 ---
 
 ## Key config (see SYSTEM_DESIGN.md)
 
-- latent_dim 64, num_layers 2, num_heads 4, hidden_dim 128.
-- n_action_types 14, n_angle_bins 9, n_length_bins 5.
+| Parameter | Value |
+|-----------|-------|
+| `latent_dim` | 64 |
+| `num_layers` | 2 |
+| `num_heads` | 4 |
+| `hidden_dim` | 128 |
+| `position_embed_dim` | 16 |
+| `dropout` | 0.1 |
+| `n_action_types` | 14 |
+| `n_angle_bins` | 9 |
+| `n_length_bins` | 5 |
 
 ---
 

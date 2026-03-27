@@ -162,9 +162,11 @@ class PossessionGNNEncoder(nn.Module):
         # Layer 2
         out_dict = self.conv2(h_dict, active_ei, **ea_kw)
 
-        # Add skip
+        # Add skip connection; fall back to skip if a type has no incoming edges
         for ntype in ("event", "player"):
             if ntype in out_dict:
                 out_dict[ntype] = out_dict[ntype] + skip[ntype]
+            elif ntype in skip:
+                out_dict[ntype] = skip[ntype]
 
         return out_dict

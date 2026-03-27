@@ -28,6 +28,9 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -58,6 +61,7 @@ class SelfConsistencyEvaluator:
         min_poss_per_split: int = 50,
         random_half_min_poss: int = 100,
         seed: int = 42,
+        gender_map: Optional[Dict[int, str]] = None,
     ):
         self.model = model.to(device)
         self.model.eval()
@@ -66,6 +70,7 @@ class SelfConsistencyEvaluator:
         self.min_poss_per_split = min_poss_per_split
         self.random_half_min_poss = random_half_min_poss
         self.seed = seed
+        self.gender_map = gender_map
 
     # ------------------------------------------------------------------
     # Step 1: encode all graphs, collecting per-possession embeddings
@@ -146,6 +151,7 @@ class SelfConsistencyEvaluator:
 
         testable_pids: set[int] = set()
         z_distractor_list: List[np.ndarray] = []
+        distractor_pids: List[int] = []
 
         for pid, emb_list in raw_embs.items():
             by_comp: Dict[int, List[np.ndarray]] = defaultdict(list)
@@ -187,6 +193,7 @@ class SelfConsistencyEvaluator:
                 all_vecs = [v for _, v in emb_list]
                 if len(all_vecs) >= min_poss_distractor:
                     z_distractor_list.append(self._pool(pooling, all_vecs))
+                    distractor_pids.append(pid)
 
         if not z_a_list:
             return {"n_players": 0}
@@ -199,6 +206,7 @@ class SelfConsistencyEvaluator:
             Z_a, Z_b, player_ids, player_meta,
             label="competition_split",
             Z_distractor=Z_distractor,
+            distractor_pids=distractor_pids,
         )
 
     # ------------------------------------------------------------------
@@ -227,6 +235,7 @@ class SelfConsistencyEvaluator:
         z_b_list: List[np.ndarray] = []
         player_meta: List[dict] = []
         z_distractor_list: List[np.ndarray] = []
+        distractor_pids: List[int] = []
 
         for pid, emb_list in raw_embs.items():
             n_poss = len(emb_list)
@@ -259,6 +268,7 @@ class SelfConsistencyEvaluator:
             elif n_poss >= min_poss_distractor:
                 all_vecs = [v for _, v in emb_list]
                 z_distractor_list.append(self._pool(pooling, all_vecs))
+                distractor_pids.append(pid)
 
         if not z_a_list:
             return {"n_players": 0}
@@ -271,6 +281,7 @@ class SelfConsistencyEvaluator:
             Z_a, Z_b, player_ids, player_meta,
             label="random_half",
             Z_distractor=Z_distractor,
+            distractor_pids=distractor_pids,
         )
 
     # ------------------------------------------------------------------
@@ -285,6 +296,7 @@ class SelfConsistencyEvaluator:
         player_meta: List[dict],
         label: str,
         Z_distractor: Optional[np.ndarray] = None,
+        distractor_pids: Optional[List[int]] = None,
     ) -> dict:
         """Compute self-retrieval ranks and cosine statistics.
 
@@ -296,6 +308,9 @@ class SelfConsistencyEvaluator:
         Cosine statistics (self-cosine, cross-cosine, margin) are always
         computed from the testable-player matrix only, so they remain
         comparable regardless of whether distractors are present.
+
+        When ``self.gender_map`` is set, retrieval ranks are computed
+        within the same gender only.
         """
         n = Z_a.shape[0]
 
@@ -318,16 +333,35 @@ class SelfConsistencyEvaluator:
 
         gallery_size = gallery_b.shape[0]
 
+        # --- Build gender mask for gallery (testable PIDs + distractor PIDs) ---
+        gallery_pids = list(player_ids) + (distractor_pids or [])
+        gender_masks: Optional[Dict[str, np.ndarray]] = None
+        if self.gender_map:
+            gender_for_gallery = [self.gender_map.get(pid) for pid in gallery_pids]
+            gender_masks = {}
+            for g in ("male", "female"):
+                gender_masks[g] = np.array([gv == g for gv in gender_for_gallery])
+
         sim_a_gallery = cosine_similarity(Z_a, gallery_b)  # (n, gallery_size)
         sim_b_gallery = cosine_similarity(Z_b, gallery_a)  # (n, gallery_size)
 
         ranks_a_to_b = np.zeros(n, dtype=int)
         ranks_b_to_a = np.zeros(n, dtype=int)
         for i in range(n):
-            sorted_b = np.argsort(sim_a_gallery[i])[::-1]
+            sims_b = sim_a_gallery[i].copy()
+            sims_a = sim_b_gallery[i].copy()
+
+            if gender_masks:
+                query_gender = self.gender_map.get(player_ids[i])
+                if query_gender and query_gender in gender_masks:
+                    mask = gender_masks[query_gender]
+                    sims_b[~mask] = -np.inf
+                    sims_a[~mask] = -np.inf
+
+            sorted_b = np.argsort(sims_b)[::-1]
             ranks_a_to_b[i] = int(np.where(sorted_b == i)[0][0]) + 1
 
-            sorted_a = np.argsort(sim_b_gallery[i])[::-1]
+            sorted_a = np.argsort(sims_a)[::-1]
             ranks_b_to_a[i] = int(np.where(sorted_a == i)[0][0]) + 1
 
         all_ranks = np.concatenate([ranks_a_to_b, ranks_b_to_a])
@@ -335,11 +369,27 @@ class SelfConsistencyEvaluator:
         def hit_rate(ranks, k):
             return float(np.mean(ranks <= k))
 
+        effective_gallery = gallery_size
+        gender_gallery_sizes: Optional[Dict[str, int]] = None
+        if gender_masks:
+            gender_gallery_sizes = {
+                g: int(m.sum()) for g, m in gender_masks.items() if m.sum() > 0
+            }
+            query_genders = [self.gender_map.get(pid) for pid in player_ids]
+            effective_sizes = [
+                gender_gallery_sizes.get(g, gallery_size) if g else gallery_size
+                for g in query_genders
+            ]
+            effective_gallery = round(float(np.mean(effective_sizes)))
+
         summary = {
             "label": label,
             "n_players": n,
             "gallery_size": gallery_size,
+            "effective_gallery_size": effective_gallery,
+            "gender_gallery_sizes": gender_gallery_sizes,
             "n_distractors": gallery_size - n,
+            "gender_filtered": self.gender_map is not None,
             "self_cosine_mean": round(float(np.mean(self_cosines)), 4),
             "self_cosine_median": round(float(np.median(self_cosines)), 4),
             "self_cosine_std": round(float(np.std(self_cosines)), 4),
@@ -429,6 +479,7 @@ class SelfConsistencyEvaluator:
             json_path = output_dir / "self_consistency_results.json"
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(result, f, indent=2, default=str)
+            _generate_visualizations(result, output_dir)
 
         return result
 
@@ -459,12 +510,18 @@ class SelfConsistencyEvaluator:
             lines.append("=" * 78)
             lines.append("")
             lines.append(f"  Testable players           : {s['n_players']}")
-            lines.append(f"  Gallery size               : {s['gallery_size']}  ({s['n_players']} testable + {s['n_distractors']} distractors)")
+            lines.append(f"  Gallery size (total)       : {s['gallery_size']}  ({s['n_players']} testable + {s['n_distractors']} distractors)")
+            if s.get("gender_filtered"):
+                gg = s.get("gender_gallery_sizes", {})
+                gg_parts = ", ".join(f"{g}: {n}" for g, n in sorted(gg.items())) if gg else "?"
+                lines.append(f"  Gender filtering           : Yes (ranks computed within same gender)")
+                lines.append(f"  Effective gallery per gender: {gg_parts}")
             lines.append(f"  Self-cosine (mean/med/std)  : {s['self_cosine_mean']:.4f} / {s['self_cosine_median']:.4f} / {s['self_cosine_std']:.4f}")
             lines.append(f"  Cross-cosine (mean)         : {s['cross_cosine_mean']:.4f}")
             lines.append(f"  Cosine margin (self - cross): {s['cosine_margin']:.4f}")
             lines.append("")
-            lines.append(f"  Self-retrieval ranks ({s['n_players'] * 2} queries, gallery of {s['gallery_size']}):")
+            eff = s.get("effective_gallery_size", s["gallery_size"])
+            lines.append(f"  Self-retrieval ranks ({s['n_players'] * 2} queries, effective gallery ~{eff}):")
             lines.append(f"    Mean rank   : {s['mean_rank_all']:.1f}")
             lines.append(f"    Median rank : {s['median_rank_all']}")
             lines.append(f"    Hit@1       : {s['hit_at_1']:.1%}")
@@ -558,5 +615,175 @@ class SelfConsistencyEvaluator:
         if len(rows) == 0:
             return "", "Unknown"
         name = str(rows.iloc[0].get("player_name", ""))
-        pos = str(rows["position_name"].mode().iloc[0])
+        pos_mode = rows["position_name"].mode()
+        pos = str(pos_mode.iloc[0]) if len(pos_mode) > 0 else "Unknown"
         return name, pos
+
+
+# ── Visualizations ──────────────────────────────────────────────────────
+
+_TEST_COLORS = {"competition_split": "#2563eb", "random_half": "#f59e0b"}
+_GROUP_COLORS = {
+    "Goalkeeper": "#ef4444", "Defender": "#3b82f6",
+    "Midfielder": "#22c55e", "Forward": "#f97316",
+}
+
+
+def _generate_visualizations(result: dict, output_dir: Path) -> None:
+    """Generate all self-consistency diagnostic plots."""
+    _plot_hit_at_k_comparison(result, output_dir)
+    _plot_rank_distribution(result, output_dir)
+    _plot_position_group_breakdown(result, output_dir)
+
+
+def _plot_hit_at_k_comparison(result: dict, output_dir: Path) -> None:
+    """Side-by-side hit@k bars for competition-split vs random-half."""
+    k_levels = [1, 5, 10, 20, 50]
+    tests = []
+    for key, label in [("competition_split", "Comp-Split"),
+                       ("random_half", "Random-Half")]:
+        s = result.get(key, {}).get("summary")
+        if s:
+            tests.append((key, label, s))
+
+    if not tests:
+        return
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    x = np.arange(len(k_levels))
+    width = 0.35
+    n_tests = len(tests)
+
+    for j, (key, label, s) in enumerate(tests):
+        vals = [s.get(f"hit_at_{k}", 0) for k in k_levels]
+        offset = (j - (n_tests - 1) / 2) * width
+        bars = ax.bar(x + offset, vals, width, label=label,
+                      color=_TEST_COLORS.get(key, "#94a3b8"),
+                      edgecolor="white", linewidth=0.5)
+        for bar, v in zip(bars, vals):
+            if v > 0:
+                ax.text(bar.get_x() + bar.get_width() / 2,
+                        bar.get_height() + 0.01,
+                        f"{v:.0%}", ha="center", fontsize=7,
+                        fontweight="bold")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"Hit@{k}" for k in k_levels], fontsize=10)
+    ax.set_ylabel("Hit Rate", fontsize=10)
+    ax.set_ylim(0, 1.15)
+    ax.set_title("Self-Consistency: Hit@K Comparison",
+                  fontsize=12, fontweight="bold")
+    ax.legend(fontsize=9, framealpha=0.8)
+    ax.grid(axis="y", alpha=0.3)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    fig.tight_layout()
+    fig.savefig(output_dir / "sc_hit_at_k.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_rank_distribution(result: dict, output_dir: Path) -> None:
+    """CDF of self-retrieval ranks for both tests."""
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    for key, label in [("competition_split", "Comp-Split"),
+                       ("random_half", "Random-Half")]:
+        per_player = result.get(key, {}).get("per_player", [])
+        if not per_player:
+            continue
+        all_ranks = []
+        for p in per_player:
+            all_ranks.append(p["rank_a_to_b"])
+            all_ranks.append(p["rank_b_to_a"])
+        all_ranks = np.sort(all_ranks)
+        cdf = np.arange(1, len(all_ranks) + 1) / len(all_ranks)
+        ax.step(all_ranks, cdf, where="post", linewidth=2,
+                color=_TEST_COLORS.get(key, "#94a3b8"), label=label)
+
+    for k_val, ls in [(1, "--"), (5, "-."), (10, ":")]:
+        ax.axvline(k_val, color="#cbd5e1", linestyle=ls, linewidth=0.8,
+                   label=f"rank={k_val}")
+
+    ax.set_xlabel("Self-Retrieval Rank", fontsize=10)
+    ax.set_ylabel("Cumulative Proportion", fontsize=10)
+    ax.set_xscale("symlog", linthresh=10)
+    ax.set_ylim(0, 1.05)
+    ax.set_title("Self-Retrieval Rank CDF\n"
+                  "(steeper rise at low ranks = better identity preservation)",
+                  fontsize=12, fontweight="bold")
+    ax.legend(fontsize=8, framealpha=0.8)
+    ax.grid(True, alpha=0.3)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    fig.tight_layout()
+    fig.savefig(output_dir / "sc_rank_cdf.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_position_group_breakdown(result: dict, output_dir: Path) -> None:
+    """Bar chart: hit@1 and mean self-cosine by position group for each test."""
+    tests_with_groups = []
+    for key, label in [("competition_split", "Comp-Split"),
+                       ("random_half", "Random-Half")]:
+        s = result.get(key, {}).get("summary")
+        if s and s.get("by_position_group"):
+            tests_with_groups.append((key, label, s))
+
+    if not tests_with_groups:
+        return
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
+
+    groups_order = ["Goalkeeper", "Defender", "Midfielder", "Forward"]
+
+    for test_idx, (key, label, s) in enumerate(tests_with_groups):
+        by_grp = s["by_position_group"]
+        present = [g for g in groups_order if g in by_grp]
+        x = np.arange(len(present))
+        width = 0.35
+        offset = (test_idx - (len(tests_with_groups) - 1) / 2) * width
+
+        hit1_vals = [by_grp[g].get("hit_at_1", 0) for g in present]
+        ax1.bar(x + offset, hit1_vals, width, label=label,
+                color=_TEST_COLORS.get(key, "#94a3b8"),
+                edgecolor="white", linewidth=0.5)
+
+        cos_vals = [by_grp[g].get("self_cosine_mean", 0) for g in present]
+        ax2.bar(x + offset, cos_vals, width, label=label,
+                color=_TEST_COLORS.get(key, "#94a3b8"),
+                edgecolor="white", linewidth=0.5)
+
+    present = [g for g in groups_order
+               if any(g in result.get(k, {}).get("summary", {}).get(
+                   "by_position_group", {})
+                      for k, _, _ in tests_with_groups)]
+    x = np.arange(len(present))
+
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(present, fontsize=9)
+    ax1.set_ylabel("Hit@1 Rate", fontsize=10)
+    ax1.set_ylim(0, 1.1)
+    ax1.set_title("Self-Retrieval Hit@1 by Position", fontsize=11,
+                   fontweight="bold")
+    ax1.legend(fontsize=8, framealpha=0.8)
+    ax1.grid(axis="y", alpha=0.3)
+    ax1.spines["top"].set_visible(False)
+    ax1.spines["right"].set_visible(False)
+
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(present, fontsize=9)
+    ax2.set_ylabel("Mean Self-Cosine", fontsize=10)
+    ax2.set_title("Self-Cosine by Position", fontsize=11, fontweight="bold")
+    ax2.legend(fontsize=8, framealpha=0.8)
+    ax2.grid(axis="y", alpha=0.3)
+    ax2.spines["top"].set_visible(False)
+    ax2.spines["right"].set_visible(False)
+
+    fig.suptitle("Self-Consistency: Position Group Breakdown",
+                 fontsize=13, fontweight="bold", y=1.02)
+    fig.tight_layout()
+    fig.savefig(output_dir / "sc_position_breakdown.png", dpi=150,
+                bbox_inches="tight")
+    plt.close(fig)

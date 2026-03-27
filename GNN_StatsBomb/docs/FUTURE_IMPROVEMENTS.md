@@ -101,6 +101,22 @@ Check correlation between this and cosine distance in z_p. If correlation is wea
 
 **Status:** Implemented via `PlayerAwareBatchSampler` in `src/phase5_training/sampler.py`. Default K=16 players, M=6 possessions each (=96 batch size). Enabled via `--player_sampling` CLI flag. Backward compatible (defaults to `False`, existing baselines unaffected). Produces ~240 contrastive positive pairs per batch vs ~0 with random shuffling.
 
+### 15. ~~Gender-aware evaluation~~ (IMPLEMENTED)
+
+**Issue:** The embedding space mixes male and female players from different competitions (e.g. Euro 2024 and Women's World Cup 2023). Without gender filtering, a female query player could receive male players as top candidates (or vice versa), producing meaningless comparisons.
+
+**Fix:** All similarity-based modes (search, ground truth, self-consistency, policy diagnostic, Phase 7 analysis, FIFA comparison) now filter candidates by gender. Gender is derived from competition metadata (`competitions.json` → `competition_gender`) via `build_gender_map()` in `similarity_search.py`. The filter is applied post-embedding — training and embedding generation are unchanged; only candidate ranking is affected.
+
+**Status:** Implemented across `similarity_search.py`, `ground_truth.py`, `self_consistency.py`, `policy_diagnostic.py`, `report_builder.py`, and `test_fifa_comparison.py`.
+
+### 16. ~~FIFA stat comparison for external validation~~ (IMPLEMENTED)
+
+**Issue:** All evaluation metrics were internal to the GNN system. There was no external validation against independently measured player attributes.
+
+**Fix:** `test_fifa_comparison.py` matches StatsBomb players to FIFA/EA Sports FC data and compares the FIFA stats of query players with their GNN-recommended substitutes. Generates radar charts, scatter plots (cosine similarity vs stat difference with Spearman ρ), per-stat breakdowns, and summary dashboards.
+
+**Status:** Implemented. `match_fifa_players.py` handles the matching; `test_fifa_comparison.py` runs the comparison with visualizations. Integrated into the unified evaluation pipeline via `--mode fifa_comparison`.
+
 ### 12. Missing or coarse context (minute, score)
 
 **Issue:** Period is included but not minute; score differential was rejected. Behaviour varies within a half and with scoreline. Omitting them can make the model attribute those effects to “player trait,” inflating z_p with context (e.g. a player who often appears in late-game chasing scenarios may look “direct/vertical” due to context, not style).
@@ -162,6 +178,8 @@ The following notes reflect checks against the actual codebase and StatsBomb dat
 | 12  | **Keep (with data note)** | **Minute:** Available in metadata (`possession_builder` and `feature_encoder` use `minute`, `second`, `timestamp`); not currently in the 126-D event vector (only period one-hot is). Can be added. **Score:** Match-level `home_score`/`away_score` exist in data prep; **running score at event time** is not in StatsBomb open data and would need to be computed from goal events if used.                                                                                                                                                                                                                                                                                                                                                                     |
 | 13  | **Implemented**           | Substitute-quality diagnostic implemented in `src/phase6_inference/policy_diagnostic.py`. Top-K cosine neighbours are 1.8-17.2x more behaviorally similar than random same-group players. See EVALUATION_RESULTS.md §5.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | 14  | **Fixed**                 | Early stopping / best-model selection was corrupted by annealed auxiliary loss weights deflating `val_total`. Fixed: trainer now uses supervised-only metric (`action + λ_outcome · outcome`) for early stopping and LR scheduling. See `trainer.py`. |
+| 15  | **Implemented**           | Gender-aware evaluation: all similarity modes filter candidates by gender derived from competition metadata. Implemented in `similarity_search.py`, `ground_truth.py`, `self_consistency.py`, `policy_diagnostic.py`, `report_builder.py`, `test_fifa_comparison.py`. |
+| 16  | **Implemented**           | FIFA stat comparison: external validation via `test_fifa_comparison.py` comparing GNN substitute recommendations against FIFA/EA Sports FC player attributes. Generates radar charts, scatter plots, per-stat breakdowns, and summary dashboards. |
 
 
 **Summary:** No item is unnecessary or out of scope. The only substantive correction is **#7**: the graph is not “silently wrong” — context geometry is per-event via many context nodes. The improvement is an optional, cleaner design (edge_attr instead of many nodes), and the written spec should be aligned with the implementation. **#14** was a critical training bug discovered post-hoc and has been fixed.
@@ -215,7 +233,7 @@ The following notes reflect checks against the actual codebase and StatsBomb dat
 ## Document info
 
 - **Created:** For future considerations; reflects post–uniformity-loss and dual-channel position run.
-- **Last updated:** Post early-stopping fix (trainer now uses supervised-only val metric for model selection). Temperature and pooled-weight annealing implemented. Ground-truth and self-consistency evaluations added.
-- **Critical vulnerabilities & blind spots:** Added from external critical analysis; items agreed and transcribed for future work (graph geometry, temporal scaling, counterfactual framing, discretization, evaluation, 360/node semantics, situation encoder leakage, usage vs policy, FiLM sensitivity, contrastive batching, context features, substitute-specific metrics, early-stopping bug #14).
+- **Last updated:** Post gender-aware evaluation and FIFA comparison implementation. All evaluation pipelines now filter by gender. Unified evaluation pipeline (`full_eval`, `full_eval_all`) added. Baseline artifacts moved to `checkpoints/baseline/` and `embeddings/baseline/`.
+- **Critical vulnerabilities & blind spots:** Added from external critical analysis; items agreed and transcribed for future work (graph geometry, temporal scaling, counterfactual framing, discretization, evaluation, 360/node semantics, situation encoder leakage, usage vs policy, FiLM sensitivity, contrastive batching, context features, substitute-specific metrics, early-stopping bug #14, gender filtering #15, FIFA comparison #16).
 - **See also:** [SYSTEM_DESIGN.md](../SYSTEM_DESIGN.md), [README.md](../README.md), phase docs in this folder.
 

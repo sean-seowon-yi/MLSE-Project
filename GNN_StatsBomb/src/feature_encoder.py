@@ -290,7 +290,10 @@ class EventFeatureEncoder:
         parts.append(np.array([nex, ney, has_end], dtype=np.float32))
         parts.append(np.array([dx, dy], dtype=np.float32))
         parts.append(np.array([dist, angle], dtype=np.float32))
-        parts.append(self._one_hot("play_pattern", row.get("play_pattern") or "Regular Play"))
+        _pp = row.get("play_pattern")
+        if not _pp or _is_nan(_pp) or not isinstance(_pp, str):
+            _pp = "Regular Play"
+        parts.append(self._one_hot("play_pattern", _pp))
         parts.append(self._one_hot("position", pos_name))
         parts.append(self._one_hot_optional("body_part", body_part))
         parts.append(self._one_hot_optional("pass_outcome", row.get("pass_outcome")))
@@ -328,7 +331,10 @@ class EventFeatureEncoder:
 
         # Match period (situational context — not masked at training)
         # Period 5 (penalty shootout) is excluded upstream in data_preparation.py
-        period_val = int(row.get("period", 1) or 1)
+        _period_raw = row.get("period", 1)
+        if _is_nan(_period_raw):
+            _period_raw = 1
+        period_val = int(_period_raw or 1)
         period_name = f"Period {period_val}" if period_val <= 2 else f"Extra Time {period_val - 2}"
         parts.append(self._one_hot("period", period_name))
 

@@ -5,10 +5,13 @@ Given the global trait embeddings ``z_p`` from EmbeddingGenerator, this
 module provides:
   - Cosine or Euclidean similarity matrix computation.
   - Top-k nearest-neighbour retrieval with optional filters
-    (position group, minimum possessions, league, etc.).
+    (position group, minimum possessions, gender, etc.).
   - Inference-time mirroring for cross-sided queries.
+  - Utility to build a player_id → gender mapping from processed data.
 """
 
+import json
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -23,6 +26,44 @@ _POS_TO_GROUP: Dict[str, str] = {}
 for group, positions in POSITION_GROUPS.items():
     for pos in positions:
         _POS_TO_GROUP[pos] = group
+
+
+def build_gender_map(
+    data_output_dir: str,
+    statsbomb_base_path: str,
+) -> Dict[int, str]:
+    """Derive a ``{player_id: 'male'|'female'}`` mapping at search time.
+
+    Uses the processed event metadata (which records ``competition_id`` per
+    event) and StatsBomb ``competitions.json`` (which records gender per
+    competition).  No training or embedding artefacts are modified.
+    """
+    meta_path = Path(data_output_dir) / "event_metadata.parquet"
+    comp_path = Path(statsbomb_base_path) / "competitions.json"
+
+    if not meta_path.exists():
+        raise FileNotFoundError(f"Event metadata not found: {meta_path}")
+    if not comp_path.exists():
+        raise FileNotFoundError(f"Competitions file not found: {comp_path}")
+
+    with open(comp_path, encoding="utf-8") as f:
+        comps = json.load(f)
+
+    comp_gender: Dict[int, str] = {}
+    for c in comps:
+        cid = c["competition_id"]
+        if cid not in comp_gender and "competition_gender" in c:
+            comp_gender[cid] = c["competition_gender"]
+
+    meta = pd.read_parquet(meta_path, columns=["player_id", "competition_id"])
+    meta["gender"] = meta["competition_id"].map(comp_gender)
+    gender_map: Dict[int, str] = (
+        meta.dropna(subset=["gender"])
+        .groupby("player_id")["gender"]
+        .first()
+        .to_dict()
+    )
+    return gender_map
 
 
 class SimilaritySearcher:
@@ -71,6 +112,7 @@ class SimilaritySearcher:
         position_group: Optional[str] = None,
         min_possessions: Optional[int] = None,
         exclude_same_team: bool = False,
+        gender_map: Optional[Dict[int, str]] = None,
     ) -> pd.DataFrame:
         """
         Return top-k players most similar to *query_player_id*.
@@ -86,6 +128,9 @@ class SimilaritySearcher:
         position_group : filter to a specific group ("Defender", etc.).
         min_possessions : override config.min_samples_per_player.
         exclude_same_team : if True exclude same-team players.
+        gender_map : {player_id: 'male'|'female'}.  When provided, only
+                     candidates of the same gender as the query are
+                     considered.  The ranking is recomputed after filtering.
 
         Returns
         -------
@@ -110,6 +155,13 @@ class SimilaritySearcher:
         # Apply filters
         mask = np.ones(len(pids), dtype=bool)
         mask[target_idx] = False
+
+        if gender_map:
+            query_gender = gender_map.get(int(query_player_id))
+            if query_gender:
+                mask &= np.array([
+                    gender_map.get(int(pid)) == query_gender for pid in pids
+                ])
 
         if position_group:
             pos_names = player_info["position_name"].values

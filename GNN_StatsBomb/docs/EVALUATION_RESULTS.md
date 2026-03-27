@@ -596,3 +596,104 @@ The counterfactual fix confirms that:
 - **Combined (v3) is the recommended model for deployment** in both identity-verification and scouting scenarios, pending retraining with the fixed early stopping.
 - **Retraining both pipelines with the fixed supervised-only early stopping** is strongly recommended. The v3 results demonstrate that the *checkpoint selection strategy* is at least as important as the training objective — proper early stopping should yield models that are better than both v2 and v3.
 - **The split-context edge ablation is definitively resolved:** teammate/opponent edge splitting provides a clear, consistent benefit across all evaluations when combined with player-aware sampling.
+
+---
+
+## 9. Re-evaluation with Corrected Statistical Methodology (v4)
+
+> **Date**: 2026-03-25
+>
+> **What changed**: Two statistical methodology fixes were applied to `policy_diagnostic.py` and the full evaluation pipeline was re-run on both pipelines (same models, same checkpoints as v3):
+>
+> 1. **Holm-Bonferroni monotonicity enforcement** — The textbook Holm procedure requires adjusted p-values to be monotonically non-decreasing (`adjusted[i] = max(adjusted[i], adjusted[i-1])`). The previous implementation omitted this step, which could produce paradoxical results (a larger raw p-value receiving a smaller adjusted p-value).
+> 2. **NaN guard in Mantel permutation test** — If `spearmanr` returns NaN (from constant-value arrays), the comparison `perm_rho >= observed_rho` is always False (NaN semantics), yielding a spuriously small p-value suggesting significance when there is no meaningful correlation.
+>
+> **Models are unchanged.** All results below use the same `best_model.pt` checkpoints as Section 8. Self-consistency and ground-truth metrics are identical to v3 (deterministic given same model/embeddings). Policy diagnostic correlation (rho) values are identical. Substitute quality ratios show minor variation due to re-run randomness in query player selection.
+
+### 9.1 Self-Consistency (unchanged from v3)
+
+Self-consistency metrics are identical to Section 8.1. Key numbers for reference:
+
+| Metric | Player-samp | Combined |
+|--------|-------------|----------|
+| **Competition-split** | | |
+| Mean rank | 247.9 | **199.3** |
+| Median rank | 132 | **86** |
+| Hit@10 | 6.4% | **19.8%** |
+| **Random-half** | | |
+| Mean rank | 151.2 | **3.2** |
+| Median rank | 74 | **1** |
+| Hit@1 | 1.7% | **68.4%** |
+| Hit@10 | 11.7% | **94.0%** |
+
+### 9.2 Ground Truth (unchanged from v3)
+
+Ground-truth metrics are identical to Section 8.2. Key numbers for reference:
+
+| Metric | Player-samp | Combined |
+|--------|-------------|----------|
+| Mean cosine | **0.2789** | 0.1098 |
+| Mean rank | **269.6** | 667.5 |
+| Hit@50 | **5.0%** | 0.0% |
+
+### 9.3 Policy Diagnostic (corrected methodology)
+
+#### Policy-cosine correlation (Spearman rho)
+
+Rho values are identical to v3. All group-level permutation p-values are now properly Holm-Bonferroni corrected with monotonicity enforcement.
+
+| Position Group | Player-samp rho | Player-samp p\_holm | Combined rho | Combined p\_holm |
+|----------------|-----------------|---------------------|--------------|-------------------|
+| Goalkeeper | 0.791 | 0.004 | **0.751** | 0.004 |
+| Defender | 0.528 | 0.004 | **0.766** | 0.004 |
+| Midfielder | 0.435 | 0.004 | **0.833** | 0.004 |
+| Forward | 0.474 | 0.004 | **0.769** | 0.004 |
+| **Overall** | 0.521 | *(pooled)* | **0.798** | *(pooled)* |
+
+All correlations remain highly significant (p\_holm = 0.004, well below 0.05) after correction. The Holm correction uses `p_raw × (m − rank)` with m=4 groups and enforces monotonicity.
+
+#### Substitute quality
+
+| Metric | Player-samp | Combined |
+|--------|-------------|----------|
+| JS(top-K) | 0.005812 | **0.000833** |
+| JS(random-K) | 0.019122 | **0.013273** |
+| **Ratio** | 3.29 | **15.94** |
+| **95% CI** | [3.20, 51.15] | **[8.52, 24.26]** |
+
+Combined maintains a dramatically higher substitute ratio (15.9x) with a tight 95% bootstrap confidence interval [8.5, 24.3], confirming this is a robust result. Player-samp's wide CI [3.2, 51.2] reflects high variance across the 10 query players.
+
+#### FiLM sensitivity (mean JS, correct vs shuffled)
+
+| Position Group | Player-samp | Combined |
+|----------------|-------------|----------|
+| Goalkeeper | 0.0067 | **0.0017** |
+| Defender | 0.0088 | **0.0090** |
+| Midfielder | 0.0075 | **0.0048** |
+| Forward | 0.0063 | **0.0042** |
+| **Overall** | 0.0077 | **0.0061** |
+
+### 9.4 Statistical Methodology Notes
+
+The following statistical improvements are now reflected in all v4 reports:
+
+1. **Mantel-style permutation tests** replace parametric Spearman p-values. Distance-matrix pairs share players and violate i.i.d. assumptions, making parametric p-values unreliable. The permutation test shuffles row/column labels of the cosine-distance matrix (1,000 permutations) and counts exceedances.
+
+2. **Holm-Bonferroni correction** is applied across 4 group-level tests with proper monotonicity enforcement. Adjusted p-values are guaranteed non-decreasing when sorted by raw p-value.
+
+3. **Bootstrap 95% CIs** are reported for the aggregate substitute ratio (2,000 bootstrap resamples, percentile method).
+
+4. **Mixed query selection** for substitute quality: half of query players are selected from the highest-possession players per group, half are randomly sampled from the remainder. This mitigates bias toward high-data players.
+
+5. **Guaranteed derangements** in FiLM sensitivity: the z\_p shuffle uses rejection sampling (n≥3) or exact swap (n=2) to ensure no player retains their own embedding.
+
+### 9.5 Summary and Recommendations
+
+The v4 re-evaluation confirms all v3 findings with improved statistical rigor:
+
+| Pipeline | Best for | Key strength | Key weakness |
+|----------|----------|-------------|--------------|
+| **Combined (split\_ctx\_ps)** | Identity verification, scouting | Hit@1=68.4% (random-half), rho=0.80, sub ratio=15.9x | Ground-truth mean rank 667.5 |
+| **Player-samp** | Cross-player similarity search | Ground-truth mean rank 269.6 | Hit@1=1.7% (random-half), rho=0.52 |
+
+**Combined remains the recommended model.** Its behavioral validation (rho=0.80, substitute ratio 15.9x with CI [8.5, 24.3]) is the strongest of any model tested. Retraining with the fixed supervised-only early stopping is still recommended to potentially improve further.
