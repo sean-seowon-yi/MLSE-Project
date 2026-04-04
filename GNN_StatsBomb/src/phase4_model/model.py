@@ -20,26 +20,30 @@ the GNN.  At inference, the same pooling is used to aggregate
 per-possession embeddings into a global player trait.
 """
 
+import random
+
 import torch
 import torch.nn as nn
 from torch_geometric.data import HeteroData
 from torch_geometric.utils import scatter
 from typing import Dict, List, Optional, Tuple
 
-from ..config import GraphConfig, ModelConfig, POSITION_IDX_TO_GROUP
+from ..config import GraphConfig, ModelConfig, POSITION_IDX_TO_GROUP, NUM_POSITION_GROUPS
 from .projections import EventProjection, PlayerProjection
 from .gnn_encoder import PossessionGNNEncoder
 from .pooling import AttentionPooling
 
 # Pre-built tensor for mapping position index → group index (on any device).
-_POS_TO_GROUP_T = torch.tensor(POSITION_IDX_TO_GROUP, dtype=torch.long)
-
-
 class PlayerSimilarityModel(nn.Module):
 
     def __init__(self, config: ModelConfig, graph_config: Optional[GraphConfig] = None):
         super().__init__()
         self.config = config
+        self.ablate_position = getattr(config, "ablate_position", False)
+        self.register_buffer(
+            "_pos_group_map",
+            torch.tensor(POSITION_IDX_TO_GROUP, dtype=torch.long),
+        )
         d = config.latent_dim
         d_pos = config.position_embed_dim
 
@@ -48,15 +52,18 @@ class PlayerSimilarityModel(nn.Module):
         self.gnn = PossessionGNNEncoder(config, graph_config=graph_config)
         self.pooling = AttentionPooling(d)
 
-        # Separate position embedding for FiLM conditioning.  Position
-        # enters z_p through the player-node path (PlayerProjection) AND
-        # through this dedicated FiLM channel — dual-channel design.
-        # z_p retains coarse role structure (e.g. GK far from outfield)
-        # while the FiLM channel sharpens within-role prediction.
-        self.film_pos_embed = nn.Embedding(config.n_positions, d_pos)
+        if self.ablate_position:
+            # No FiLM position channel — condition purely on z_p so that
+            # the player embedding must carry all role/style information.
+            self.film_pos_embed = None
+            film_input_dim = d
+        else:
+            # Dual-channel: z_p retains coarse role structure while the
+            # FiLM position channel sharpens within-role prediction.
+            self.film_pos_embed = nn.Embedding(config.n_positions, d_pos)
+            film_input_dim = d + d_pos
 
-        # FiLM conditioning: [z_p ; pos_emb] → scale (gamma) and shift (beta).
-        film_input_dim = d + d_pos
+        # FiLM conditioning → scale (gamma) and shift (beta).
         self.film_gamma = nn.Linear(film_input_dim, d)
         self.film_beta = nn.Linear(film_input_dim, d)
 
@@ -72,6 +79,10 @@ class PlayerSimilarityModel(nn.Module):
             nn.Linear(d // 2, 2),
         )
 
+        self.acts_in_dropout = 0.0
+
+        self.pos_head = nn.Linear(d, NUM_POSITION_GROUPS)
+
     def film_condition(
         self,
         h_event: torch.Tensor,
@@ -80,18 +91,24 @@ class PlayerSimilarityModel(nn.Module):
     ) -> torch.Tensor:
         """Apply FiLM conditioning: (1 + gamma) * h_event + beta.
 
-        When *pos_idx* is provided the FiLM parameters are computed from
-        ``[z_p ; pos_embed(pos_idx)]`` so that positional role information
-        flows through a dedicated channel rather than through ``z_p``.
+        When ``ablate_position`` is True, the FiLM parameters are computed
+        from ``z_p`` alone — forcing the player embedding to carry all
+        role and style information needed for action prediction.
+
+        When ``ablate_position`` is False and *pos_idx* is provided, the
+        FiLM parameters are computed from ``[z_p ; pos_embed(pos_idx)]``
+        so that positional role information flows through a dedicated
+        channel rather than through ``z_p``.
 
         The ``1 +`` centres the scale factor at identity so that event
         information flows from the first training step (gamma ≈ 0 at init).
         """
-        if pos_idx is not None:
+        if self.ablate_position or self.film_pos_embed is None:
+            cond = z_p                                      # (*, d)
+        elif pos_idx is not None:
             pos_emb = self.film_pos_embed(pos_idx)          # (*, d_pos)
             cond = torch.cat([z_p, pos_emb], dim=-1)        # (*, d + d_pos)
         else:
-            # Fallback: pad with zeros (e.g. legacy checkpoint without pos)
             pad = torch.zeros(
                 *z_p.shape[:-1], self.film_pos_embed.embedding_dim,
                 device=z_p.device, dtype=z_p.dtype,
@@ -116,26 +133,44 @@ class PlayerSimilarityModel(nn.Module):
           "pooled_z_p"             : (n_unique_players, d) — for contrastive loss
           "pooled_z_p_pids"        : (n_unique_players,)   — player IDs
           "pooled_z_p_pos_groups"  : (n_unique_players,)   — position group IDs
+          "pos_group_logits"       : (n_unique_players, NUM_POSITION_GROUPS) or None
         """
         x_event = self.event_proj(data["event"].x)
         x_player = self.player_proj(data["player"].x)
 
         x_dict = {"event": x_event, "player": x_player}
+
+        drop_acts_in = (
+            self.training
+            and self.acts_in_dropout > 0
+            and random.random() < self.acts_in_dropout
+        )
         edge_index_dict = {
-            et: data[et].edge_index for et in data.edge_types
+            et: data[et].edge_index
+            for et in data.edge_types
+            if not (drop_acts_in and et == ("player", "acts_in", "event"))
         }
         edge_attr_dict = self._collect_edge_attrs(data)
+        if drop_acts_in and edge_attr_dict:
+            edge_attr_dict = {
+                k: v for k, v in edge_attr_dict.items()
+                if k != ("player", "acts_in", "event")
+            }
         out_dict = self.gnn(x_dict, edge_index_dict, edge_attr_dict=edge_attr_dict)
 
         h_event = out_dict["event"]    # (E, d)
         h_player = out_dict["player"]  # (P, d)
 
-        z_p, unique_pooled, unique_pids = self._gather_and_pool_actor_embeddings(
-            data, h_player
+        z_p, unique_pooled, unique_pids = (
+            self._gather_and_pool_actor_embeddings(data, h_player)
         )
 
         # Per-event position index from the acting player node.
-        event_pos_idx = self._get_event_position_indices(data)
+        # Skipped when position is ablated — FiLM uses z_p alone.
+        event_pos_idx = (
+            None if self.ablate_position
+            else self._get_event_position_indices(data)
+        )
 
         h_conditioned = self.film_condition(h_event, z_p, pos_idx=event_pos_idx)
         action_type_logits = self.action_type_head(h_conditioned)
@@ -145,10 +180,12 @@ class PlayerSimilarityModel(nn.Module):
         outcome_logits = self.outcome_head(h_event)
 
         # Position group for each unique pooled player (for hard-neg contrastive loss).
-        pos_group_map = _POS_TO_GROUP_T.to(unique_pids.device)
+        pos_group_map = self._pos_group_map
         unique_pos_groups = self._get_pooled_position_groups(
             data, unique_pids, pos_group_map,
         )
+
+        pos_group_logits = self.pos_head(unique_pooled) if unique_pooled.shape[0] > 0 else None
 
         return {
             "h_event": h_event,
@@ -160,6 +197,7 @@ class PlayerSimilarityModel(nn.Module):
             "pooled_z_p": unique_pooled,
             "pooled_z_p_pids": unique_pids,
             "pooled_z_p_pos_groups": unique_pos_groups,
+            "pos_group_logits": pos_group_logits,
         }
 
     # ------------------------------------------------------------------
@@ -199,17 +237,18 @@ class PlayerSimilarityModel(nn.Module):
         d = h_player.shape[1]
         device = h_player.device
         z_p = torch.zeros(E, d, device=device)
-        empty = torch.zeros(0, d, device=device), torch.zeros(0, dtype=torch.long, device=device)
+        empty_emb = torch.zeros(0, d, device=device)
+        empty_ids = torch.zeros(0, dtype=torch.long, device=device)
 
         edge_key = ("player", "acts_in", "event")
         if edge_key not in data.edge_types:
-            return z_p, *empty
+            return z_p, empty_emb, empty_ids
 
         src, dst = data[edge_key].edge_index
 
         if not hasattr(data, "event_player_ids"):
             z_p[dst] = h_player[src]
-            return z_p, *empty
+            return z_p, empty_emb, empty_ids
 
         # Deduplicate to one embedding per unique player node in the batch.
         # Within a single graph all acts_in edges from the same player share

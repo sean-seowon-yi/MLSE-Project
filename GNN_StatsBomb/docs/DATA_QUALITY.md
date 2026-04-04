@@ -54,6 +54,10 @@ The pipeline targets **player similarity**: event features and 360 spatial conte
 - Normalised coordinates and relevant scalars stay in [0, 1] (or [−1, 1] for signed angles).
 - Pipeline runs on the full StatsBomb open dataset without failing on the audited edge cases.
 
+## Focal-loss counts vs corpus
+
+Phase 5 focal class weights use pre-computed per-class counts in `src/phase5_training/losses.py`. After any change to the event corpus (new StatsBomb drop, different `--competition` / `--season`, or toggling `use_360`), re-aggregate counts from `processed_data/event_metadata.parquet` (and length-bin targets if needed) and update those literals so they match; otherwise weights are slightly mis-calibrated.
+
 ## See also
 
 - **README.md** — Setup, usage, configuration.

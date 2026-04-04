@@ -24,7 +24,7 @@ This is achieved via:
 
 All phases are orchestrated by `main.py` via a `--mode` CLI.
 
-**Checkpoints & embeddings:** Training and inference write to **tagged subdirectories**, not the project root. The default **baseline** tag uses `checkpoints/baseline/` (e.g. `best_model.pt`, per-epoch checkpoints, `evaluation/`) and `embeddings/baseline/` (e.g. `player_embeddings.npy`, `player_info.parquet`). Other pipeline variants use `checkpoints/{tag}/` and `embeddings/{tag}/` (see `--tag` and related flags). The legacy root-level `checkpoints/best_model.pt` and `embeddings/player_embeddings.npy` paths are no longer used.
+**Checkpoints & embeddings:** Training and inference write to **tagged subdirectories**, not the project root. The default **baseline** tag uses `checkpoints/baseline/` (e.g. `best_model.pt`, per-epoch checkpoints, `training_history.json`) and `embeddings/baseline/` (e.g. `player_embeddings.npy`, `player_info.parquet`). **Test-set metrics** from `--mode evaluate` default to `evaluations/baseline/test_metrics/` (or `evaluations/{tag}/test_metrics/`). Other pipeline variants use `checkpoints/{tag}/` and `embeddings/{tag}/` (see `--tag` and related flags). The legacy root-level `checkpoints/best_model.pt` and `embeddings/player_embeddings.npy` paths are no longer used.
 
 ### Phase 1 – Data preparation & feature encoding (`mode=prepare`)
 
@@ -85,7 +85,7 @@ Graphs, with attached metadata, are saved to `processed_data/possession_graphs.p
 Core components:
 
 - `EventProjection`: 126‑D → d (64) with `Linear → ReLU → Linear → LayerNorm`.  
-- `PlayerProjection`: position embedding (26→16) + [team_flag, dx, dy] → d with MLP + LayerNorm.  
+- `PlayerProjection`: position embedding (26→16) + [team_flag, dx, dy] → d with MLP + LayerNorm. When `ablate_position=True`, the position embedding is zeroed.  
 - `PossessionGNNEncoder`: 2‑layer **heterogeneous GATv2**:
   - Per‑relation `GATv2Conv` for each edge type.  
   - Temporal relations use `edge_dim=1` (time‑delta edge_attr).  
@@ -93,7 +93,7 @@ Core components:
 - `AttentionPooling`: attention‑weighted pooling over per‑possession `h_player` embeddings to form per‑player trait embeddings.
 - `PlayerSimilarityModel`:
   - Projects node features → runs GNN → pools actor embeddings per player → obtains `z_p`.  
-  - Uses **FiLM conditioning** with a **dual-channel position design**: position enters `z_p` via the player-node path (retaining coarse role structure) AND via a dedicated FiLM embedding (`pos_emb = Embedding(position_idx)`, `cond = [z_p ; pos_emb]`) for within-role prediction sharpening.  
+  - Uses **FiLM conditioning** with a **dual-channel position design**: position enters `z_p` via the player-node path (retaining coarse role structure) AND via a dedicated FiLM embedding (`pos_emb = Embedding(position_idx)`, `cond = [z_p ; pos_emb]`) for within-role prediction sharpening. When `ablate_position=True`, both position channels output zeros, forcing purely behavioral embeddings.  
   - Heads:
     - Action: type (14 classes), angle bin (9), length bin (5) from FiLM‑conditioned `h_event`.  
     - Outcome: shot/goal head from `h_event` only.
@@ -110,11 +110,12 @@ Core components:
 - `CombinedLoss`:
   - `L_action` — Focal loss (γ=2.0) with class weights for type & length bins.  
   - `L_outcome` — BCE for possession shot/goal flags (weight λ_outcome=0.5).  
-  - `L_contrastive` — InfoNCE on actor‑only `h_player` embeddings with **same-position-group hard negatives** (positives = same `player_id`, negatives = different `player_id`s in the same coarse position group; temperature τ=0.05; weight λ_contrast=0.5).
-  - `L_pooled_uniformity` — Gaussian‑potential uniformity loss on **pooled `z_p`** to spread embeddings on the unit hypersphere and widen cosine similarity gaps (weight λ_pooled=0.3).
+  - `L_contrastive` — InfoNCE on actor‑only `h_player` embeddings with **same-position-group hard negatives** (positives = same `player_id`, negatives = different `player_id`s in the same coarse position group). The softmax denominator includes **positives and negatives** (standard supervised contrastive form). Temperature τ=0.05 by default; weight λ_contrast=0.5.
+  - `L_pooled_uniformity` — Gaussian‑potential uniformity loss on **pooled `z_p`** to spread embeddings on the unit hypersphere and widen cosine similarity gaps (weight λ_pooled=0.3, sensitivity `uniformity_t=2.0`).
+  - `L_alignment` (optional) — EMA cross-batch alignment loss on pooled `z_p` to enforce self-consistency across batches. Uses an EMA memory bank (momentum=0.999) to maintain smoothed historical embeddings per player. Enabled via `--ema_alignment` (weight λ_alignment=0.3).
 - `Trainer`:
-  - Adam + ReduceLROnPlateau (on full validation loss), gradient clipping, early stopping.  
-  - Logs per‑epoch breakdown: total, action, outcome, contrastive, uniform, LR.
+  - Adam + ReduceLROnPlateau (on `val_supervised`), gradient clipping, early stopping.  
+  - Logs per‑epoch breakdown: total, action, outcome, contrastive, uniform, alignment (when EMA enabled), LR.
 
 The masked imitation objective forces the model to answer:
 
@@ -129,7 +130,7 @@ After training, you can evaluate the **best checkpoint** on the held-out **test 
 - **Action heads**: accuracy and macro F1 for action type, angle bin, and length bin; confusion matrices (saved as PNGs).
 - **Outcome head**: accuracy, BCE, and AUC-ROC for `ends_in_shot` and `ends_in_goal`; ROC curves (saved as PNG).
 
-Outputs are written to `checkpoints/baseline/evaluation/`: `test_metrics.json` plus `confusion_matrix_*.png` and `outcome_roc.png`. Run with:
+Outputs default to **`evaluations/baseline/test_metrics/`** (or `evaluations/{tag}/test_metrics/`): `test_metrics.json` plus `confusion_matrix_*.png` and `outcome_roc.png`. Run with:
 
 ```bash
 python main.py --mode evaluate
@@ -170,9 +171,41 @@ Requires Phase 1–3 outputs and a trained checkpoint (`checkpoints/baseline/bes
   - Writes:
     - Text reports (per-query) with detailed descriptions of situations and per‑player predictions.  
     - Bar charts of action probabilities and angle distributions.  
-    - PCA plots of the global embedding space with neighbourhoods highlighted.
+    - **PCA and t-SNE** plots of the global embedding space (three colour schemes: group, subgroup, position) and per-query neighbourhood plots for both methods.
 
 This phase is how you **interpret and debug** whether similarity aligns with “would act similarly in the same situation.”
+
+**Possession animation** (`--mode possession_animation`): exports an **MP4 or GIF** of one or more possession graphs — ball trail (discrete event locations), freeze-frame players, and **counterfactual** action arrows for two specified players or a **dynamic substitute** (top-1 cosine neighbour of the on-ball actor). Requires `--pipeline` (same as training), checkpoint, embeddings, and graphs. Examples:
+
+```bash
+python main.py --mode possession_animation --pipeline acts_in_dropout_pos_gu --list-possessions
+python main.py --mode possession_animation --pipeline acts_in_dropout_pos_gu --graph-index 0 --players 123,456 --output out.mp4
+python main.py --mode possession_animation --pipeline acts_in_dropout_pos_gu --random --dynamic-substitute --output clip.mp4
+```
+
+Implementation: `src/phase7_analysis/possession_animation.py`. Not run by `full_eval`.
+
+**Empirical behavioral fidelity** (`--mode empirical_behavioral`): standalone run of the **observed-action** agreement metrics (also executed as step 9 of `full_eval`). Writes under `evaluations/{tag}/empirical_behavioral/`. Implementation: `src/phase6_inference/empirical_behavioral.py`.
+
+### Named pipeline registry
+
+`main.py` defines a `PIPELINE_REGISTRY` with **11 named GNN pipelines**, each with a distinct architectural and training configuration:
+
+| Pipeline | Key features |
+|----------|-------------|
+| `baseline` | Default config, unified context edges |
+| `player_samp` | Player-aware batch sampling (K=16, M=6) |
+| `split_ctx` | Split teammate/opponent context edges |
+| `split_ctx_ps` | Split context + player sampling |
+| `pos_ablated` | Position ablation (zeroed position embeddings) |
+| `pos_ablated_split_ctx` | Position ablation + split context + strong uniformity (l=1.0, t=4.0) |
+| `pos_ablated_split_ctx_v2` | Same as above but l_pooled=0.7 (reduced uniformity) |
+| `pos_ablated_split_ctx_ema` | pos_ablated_split_ctx + EMA alignment loss (l=0.3) |
+| `acts_in_dropout` | pos_ablated_split_ctx stack + action-stream dropout (p=0.3) |
+| `acts_in_dropout_pos` | acts_in_dropout + position regularizer (`lambda_pos=0.3`) |
+| `acts_in_dropout_pos_gu` | `acts_in_dropout_pos` + stronger group uniformity (`uniformity_group_weight=3.0`) |
+
+Use `--mode full_eval_all` to evaluate all registered pipelines. Results are saved under `evaluations/{pipeline_name}/`. See [docs/EVALUATION_RESULTS.md](docs/EVALUATION_RESULTS.md) for comprehensive cross-model analysis.
 
 ### Gender-aware evaluation
 
@@ -191,10 +224,10 @@ No special flag is needed; gender filtering is always active.
 
 Validates the GNN similarity system against external FIFA/EA Sports FC player attributes. Requires matched FIFA CSVs in `FIFA_data/`; build them with `match_fifa_players.py` (name normalization, country aliases, year-based FIFA version mapping).
 
-- Samples 10 male + 10 female players (stratified by position group, random each run).
+- Samples 10 male + 10 female players (stratified by position group, random each run), plus **one or two famous players** when present in the pool.
 - For each, finds the top-1 same-gender substitute via GNN cosine similarity that also has FIFA data.
-- Compares their main stats (Pace, Shooting, Passing, Dribbling, Defending, Physical) and 34 detailed sub-attributes.
-- Generates 4 visualizations: radar chart grid, cosine-sim-vs-stat-diff scatter (with Spearman ρ), per-stat difference breakdown, and an evaluation summary dashboard (position match rate, rating gap histogram, similarity-by-agreement box plot).
+- Compares main stats and detailed sub-attributes (goalkeeper-specific radar layout when relevant).
+- Generates multiple PNGs: radar grid, similarity vs stat distance, breakdowns, summary-style figures (e.g. dumbbell / heatmap), category views, and sub-attribute detail heatmaps.
 
 Standalone script (same logic): `test_fifa_comparison.py`.
 
@@ -209,11 +242,15 @@ python main.py --mode full_eval
 # Evaluate a specific tagged pipeline
 python main.py --mode full_eval --tag split_ctx --split_context_edges
 
-# Evaluate ALL four registered pipelines
+# Evaluate ALL registered pipelines (11 GNN variants)
 python main.py --mode full_eval_all --eval_output_dir ./evaluations
 ```
 
-`full_eval` runs: inference → test-set evaluation → ground truth → self-consistency → policy diagnostic → Phase 7 analysis → FIFA comparison. Outputs are saved to `evaluations/{pipeline_name}/` for organized comparison across variants (configurable via `--eval_output_dir`).
+`full_eval` runs **11** steps, in order: **inference** → **test_metrics** → **ground_truth** → **position_retrieval** → **split_half** (skipped for GNN; runs for heuristics with an event-based `embed_fn`) → **qualitative_neighbors** → **self_consistency** → **policy_diagnostic** → **empirical_behavioral** → **analysis** → **fifa_comparison**. Outputs are saved under `evaluations/{pipeline_name}/{step}/` (configurable root via `--eval_output_dir`).
+
+Related modes: **`generate_heuristics`**, **`eval_heuristics`**, **`full_eval_all_with_heuristics`** (orchestrates heuristic embedding generation and the same evaluation layout).
+
+**Name lookup:** `python find_player.py "<partial name>"` — accent folding + fuzzy match; use printed `player_id` with `--mode search`.
 
 ---
 
@@ -222,7 +259,7 @@ python main.py --mode full_eval_all --eval_output_dir ./evaluations
 From `GNN_StatsBomb/`:
 
 ```bash
-# Install deps
+# Install deps (includes rapidfuzz for find_player.py)
 pip install -r requirements.txt
 
 # Phase 1
@@ -243,11 +280,21 @@ python main.py --mode evaluate
 # Phase 6A (embeddings)
 python main.py --mode inference
 
-# Phase 6B (search)
+# Phase 6B (search — requires numeric StatsBomb player_id)
 python main.py --mode search --player_id <STATS_BOMB_PLAYER_ID>
+
+# Optional: resolve name → id (accent + fuzzy; requires rapidfuzz)
+python find_player.py "mbappe"
+python find_player.py --tag split_ctx de bruyne
 
 # Phase 7 (analysis)
 python main.py --mode analyze
+
+# Empirical behavioral fidelity (standalone; also inside full_eval)
+python main.py --mode empirical_behavioral
+
+# Possession animation (requires --pipeline and graph/player args)
+python main.py --mode possession_animation --pipeline acts_in_dropout_pos_gu --list-possessions
 
 # FIFA stat comparison
 python main.py --mode fifa_comparison
@@ -255,8 +302,13 @@ python main.py --mode fifa_comparison
 # Run all evaluations for current pipeline
 python main.py --mode full_eval
 
-# Run all evaluations for ALL 4 pipeline variants
+# Run all evaluations for ALL 11 registered pipeline variants
 python main.py --mode full_eval_all --eval_output_dir ./evaluations
+
+# Heuristics + evaluate them like GNN (after full_eval_all or on demand)
+python main.py --mode generate_heuristics
+python main.py --mode eval_heuristics --eval_output_dir ./evaluations
+python main.py --mode full_eval_all_with_heuristics --eval_output_dir ./evaluations
 
 # Or run Phases 1–6A in one go:
 python main.py --mode full_pipeline
@@ -285,7 +337,8 @@ python main.py --mode full_pipeline
   - [docs/DATA_QUALITY.md](docs/DATA_QUALITY.md) — Edge cases, clamping, missing 360, role labels.
   - [docs/FUTURE_IMPROVEMENTS.md](docs/FUTURE_IMPROVEMENTS.md) — SOTA assessment and improvement roadmap.
   - [docs/PLAYER_SIMILARITY_FINAL_PLAN.md](docs/PLAYER_SIMILARITY_FINAL_PLAN.md) — High-level plan and design notes.
-  - [docs/EVALUATION_RESULTS.md](docs/EVALUATION_RESULTS.md) — Baseline and ablation study results, policy diagnostics.
+  - [docs/EVALUATION_RESULTS.md](docs/EVALUATION_RESULTS.md) — Cross-model evaluation results, policy diagnostics, empirical behavioral metrics.
+  - [docs/models/VIEW_CONSISTENCY.md](docs/models/VIEW_CONSISTENCY.md) — Proposed view-consistency variant (design note).
 
 These documents are kept consistent with the current implementation and are the best reference when extending or reviewing the system.
 

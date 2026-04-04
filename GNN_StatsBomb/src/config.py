@@ -304,6 +304,14 @@ class ModelConfig:
     position_embed_dim: int = 16
     n_positions: int = len(POSITIONS)
 
+    # When True, position information is ablated from the model:
+    #   - PlayerProjection uses only continuous features (team_flag, dx, dy),
+    #     ignoring position_idx entirely.
+    #   - FiLM conditioning uses z_p alone (no position embedding channel).
+    # Position still exists in the graph data (player.x[:, 0]) for
+    # contrastive loss hard-negative mining.
+    ablate_position: bool = False
+
     # Action prediction head
     n_action_types: int = len(EVENT_TYPES)   # 14
     n_angle_bins: int = 9   # 8 directional sectors + 1 "no-angle" bin
@@ -322,6 +330,17 @@ class TrainingConfig:
     lambda_outcome: float = 0.5
     lambda_contrast: float = 0.5
     lambda_pooled_contrast: float = 0.3
+    uniformity_t: float = 2.0
+
+    ema_alignment: bool = False
+    lambda_alignment: float = 0.3
+    ema_momentum: float = 0.999
+
+    acts_in_dropout: float = 0.0
+
+    lambda_pos: float = 0.0
+
+    uniformity_group_weight: float = 1.0
 
     patience: int = 15
     min_delta: float = 1e-4
@@ -376,12 +395,14 @@ class Config:
         os.makedirs(self.data.output_dir, exist_ok=True)
 
     def apply_tag(self, tag: str) -> None:
-        """Namespace Phase 3+ outputs under *tag*, leaving Phase 1-2 shared.
+        """Namespace training / inference outputs under *tag*, leaving Phase 1-2 shared.
 
         Replaces the leaf directory (default ``baseline``) with *tag*:
-          - Graphs file becomes ``possession_graphs_{tag}.pkl``
           - Checkpoints  → ``checkpoints/{tag}/``
           - Embeddings   → ``embeddings/{tag}/``
+
+        Possession graphs are **not** namespaced by tag: unified and split-context
+        variants are shared across pipelines (see ``graphs_filename``).
         """
         if not tag:
             return
@@ -395,9 +416,13 @@ class Config:
 
     @property
     def graphs_filename(self) -> str:
-        """Tag-aware filename for possession graphs inside ``data.output_dir``."""
-        if self.tag:
-            return f"possession_graphs_{self.tag}.pkl"
+        """Which graph pickle to load — keyed by topology, not training tag.
+
+        ``baseline`` and ``player_samp`` share unified graphs; ``split_ctx`` and
+        ``split_ctx_ps`` share split-context graphs (build once per variant).
+        """
+        if self.graph.split_context_edges:
+            return "possession_graphs_split_ctx.pkl"
         return "possession_graphs.pkl"
 
 

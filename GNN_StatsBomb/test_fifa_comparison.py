@@ -400,6 +400,10 @@ _GENDER_COLORS = {"male": "#3b82f6", "female": "#ec4899"}
 _QUERY_COLOR = "#2563eb"
 _SUB_COLOR = "#f97316"
 
+# Paper figure: few large radars per page (readable axis labels in print).
+_PAPER_RADARS_PER_PAGE = 4
+_PAPER_NCOLS = 2
+
 
 def _safe_label(name: str) -> str:
     """Keep only Latin-script characters, digits, and common punctuation.
@@ -417,6 +421,85 @@ def _safe_label(name: str) -> str:
            ):
             out.append(ch)
     return "".join(out).strip()
+
+
+def _draw_single_radar(
+    ax,
+    s: Dict,
+    idx: int,
+    *,
+    label_size: float,
+    radial_label_size: float,
+    title_size: float,
+    legend_size: float,
+    line_width: float,
+    marker_size: float,
+    title_pad: float,
+) -> None:
+    """Plot one query vs substitute radar on polar axes."""
+    outfield_keys = list(_STAT_LABELS.keys())
+    outfield_names = list(_STAT_LABELS.values())
+    gk_keys = list(_GK_STAT_LABELS.keys())
+    gk_names = list(_GK_STAT_LABELS.values())
+
+    use_gk = s.get("is_gk_pair", False)
+    if use_gk:
+        stat_keys = gk_keys
+        stat_names = gk_names
+        q_src, s_src = s.get("q_gk_stats", {}), s.get("s_gk_stats", {})
+    else:
+        stat_keys = outfield_keys
+        stat_names = outfield_names
+        q_src, s_src = s["q_main_stats"], s["s_main_stats"]
+
+    angles = np.linspace(0, 2 * np.pi, len(stat_keys), endpoint=False).tolist()
+    angles += angles[:1]
+
+    q_vals = [q_src.get(k) or 0 for k in stat_keys] + [q_src.get(stat_keys[0]) or 0]
+    s_vals = [s_src.get(k) or 0 for k in stat_keys] + [s_src.get(stat_keys[0]) or 0]
+
+    ax.plot(
+        angles,
+        q_vals,
+        "o-",
+        color=_QUERY_COLOR,
+        linewidth=line_width,
+        markersize=marker_size,
+        label=_safe_label(s["query"]),
+    )
+    ax.fill(angles, q_vals, color=_QUERY_COLOR, alpha=0.12)
+    ax.plot(
+        angles,
+        s_vals,
+        "s-",
+        color=_SUB_COLOR,
+        linewidth=line_width,
+        markersize=marker_size,
+        label=_safe_label(s["substitute"]),
+    )
+    ax.fill(angles, s_vals, color=_SUB_COLOR, alpha=0.12)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(stat_names, size=label_size)
+    ax.set_ylim(0, 100)
+    ax.set_yticks([25, 50, 75])
+    ax.set_yticklabels(["25", "50", "75"], size=radial_label_size, color="grey")
+    ax.tick_params(pad=10 if label_size >= 10 else 8)
+
+    gender_tag = s["gender"][0].upper()
+    gk_tag = " GK" if use_gk else ""
+    ax.set_title(
+        f"#{idx + 1} ({gender_tag}{gk_tag})  cos={s['cosine_sim']:.3f}",
+        size=title_size,
+        fontweight="bold",
+        pad=title_pad,
+    )
+    ax.legend(
+        loc="upper right",
+        fontsize=legend_size,
+        framealpha=0.9,
+        bbox_to_anchor=(1.42, 1.12),
+    )
 
 
 def _plot_radar_grid(summaries: List[Dict], plot_dir: Path) -> Path:
@@ -443,56 +526,21 @@ def _plot_radar_grid(summaries: List[Dict], plot_dir: Path) -> Path:
     elif ncols == 1:
         axes = axes[:, np.newaxis]
 
-    outfield_keys = list(_STAT_LABELS.keys())
-    outfield_names = list(_STAT_LABELS.values())
-    gk_keys = list(_GK_STAT_LABELS.keys())
-    gk_names = list(_GK_STAT_LABELS.values())
-
     for idx, s in enumerate(summaries):
         row_i, col_i = divmod(idx, ncols)
         ax = axes[row_i, col_i]
-
-        use_gk = s.get("is_gk_pair", False)
-        if use_gk:
-            stat_keys = gk_keys
-            stat_names = gk_names
-            q_src, s_src = s.get("q_gk_stats", {}), s.get("s_gk_stats", {})
-        else:
-            stat_keys = outfield_keys
-            stat_names = outfield_names
-            q_src, s_src = s["q_main_stats"], s["s_main_stats"]
-
-        angles = np.linspace(0, 2 * np.pi, len(stat_keys),
-                             endpoint=False).tolist()
-        angles += angles[:1]
-
-        q_vals = [q_src.get(k) or 0 for k in stat_keys] + \
-                 [q_src.get(stat_keys[0]) or 0]
-        s_vals = [s_src.get(k) or 0 for k in stat_keys] + \
-                 [s_src.get(stat_keys[0]) or 0]
-
-        ax.plot(angles, q_vals, "o-", color=_QUERY_COLOR, linewidth=1.8,
-                markersize=4, label=_safe_label(s["query"]))
-        ax.fill(angles, q_vals, color=_QUERY_COLOR, alpha=0.12)
-        ax.plot(angles, s_vals, "s-", color=_SUB_COLOR, linewidth=1.8,
-                markersize=4, label=_safe_label(s["substitute"]))
-        ax.fill(angles, s_vals, color=_SUB_COLOR, alpha=0.12)
-
-        ax.set_xticks(angles[:-1])
-        ax.set_xticklabels(stat_names, size=7)
-        ax.set_ylim(0, 100)
-        ax.set_yticks([25, 50, 75])
-        ax.set_yticklabels(["25", "50", "75"], size=6, color="grey")
-        ax.tick_params(pad=8)
-
-        gender_tag = s["gender"][0].upper()
-        gk_tag = " GK" if use_gk else ""
-        ax.set_title(
-            f"#{idx+1} ({gender_tag}{gk_tag})  cos={s['cosine_sim']:.3f}",
-            size=9, fontweight="bold", pad=14,
+        _draw_single_radar(
+            ax,
+            s,
+            idx,
+            label_size=7,
+            radial_label_size=6,
+            title_size=9,
+            legend_size=5.5,
+            line_width=1.8,
+            marker_size=4,
+            title_pad=14,
         )
-        ax.legend(loc="upper right", fontsize=5.5, framealpha=0.8,
-                  bbox_to_anchor=(1.35, 1.15))
 
     for idx in range(n, nrows * ncols):
         row_i, col_i = divmod(idx, ncols)
@@ -501,13 +549,90 @@ def _plot_radar_grid(summaries: List[Dict], plot_dir: Path) -> Path:
     fig.suptitle(
         "Query vs Substitute — FIFA Stat Profiles\n"
         "(GK pairs use Diving / Handling / Kicking / Positioning / Reflexes)",
-        fontsize=13, fontweight="bold", y=1.02,
+        fontsize=13,
+        fontweight="bold",
+        y=1.02,
     )
     fig.tight_layout()
     path = plot_dir / "radar_comparison.png"
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return path
+
+
+def _plot_radar_paper(summaries: List[Dict], plot_dir: Path) -> List[Path]:
+    """Paper-friendly radars: at most four large plots per page, readable labels.
+
+    Writes ``radar_comparison_paper.png`` (and ``radar_comparison_paper_p2.png``,
+    …) when there are more than ``_PAPER_RADARS_PER_PAGE`` pairs.
+    """
+    n = len(summaries)
+    if n == 0:
+        return []
+
+    paths: List[Path] = []
+    ncols = _PAPER_NCOLS
+    per_page = _PAPER_RADARS_PER_PAGE
+
+    for page_start in range(0, n, per_page):
+        chunk = summaries[page_start : page_start + per_page]
+        k = len(chunk)
+        # Single radar: one large panel; else 2 columns × up to 2 rows.
+        use_ncols = 1 if k == 1 else ncols
+        this_rows = (k + use_ncols - 1) // use_ncols
+        fig_w = 7.5 * use_ncols
+        fig_h = max(7.0 * this_rows, 7.0)
+
+        fig, axes = plt.subplots(
+            this_rows,
+            use_ncols,
+            figsize=(fig_w, fig_h),
+            subplot_kw={"polar": True},
+        )
+        if this_rows == 1 and use_ncols == 1:
+            axes = np.array([[axes]])
+        elif this_rows == 1:
+            axes = axes[np.newaxis, :]
+        elif use_ncols == 1:
+            axes = axes[:, np.newaxis]
+
+        for j, s in enumerate(chunk):
+            row_i, col_i = divmod(j, use_ncols)
+            ax = axes[row_i, col_i]
+            global_idx = page_start + j
+            _draw_single_radar(
+                ax,
+                s,
+                global_idx,
+                label_size=12,
+                radial_label_size=10,
+                title_size=11,
+                legend_size=10,
+                line_width=2.4,
+                marker_size=6,
+                title_pad=18,
+            )
+
+        for j in range(k, this_rows * use_ncols):
+            row_i, col_i = divmod(j, use_ncols)
+            axes[row_i, col_i].set_visible(False)
+
+        page_num = page_start // per_page + 1
+        suffix = "" if page_num == 1 else f"_p{page_num}"
+        fig.suptitle(
+            "Query vs Substitute — FIFA profiles (paper view)\n"
+            "(GK pairs: Diving / Handling / Kicking / Positioning / Reflexes)",
+            fontsize=14,
+            fontweight="bold",
+            y=1.01,
+        )
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
+        out = plot_dir / f"radar_comparison_paper{suffix}.png"
+        fig.savefig(out, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+        paths.append(out)
+
+    return paths
 
 
 def _plot_similarity_vs_diff(summaries: List[Dict], plot_dir: Path) -> Path:
@@ -943,6 +1068,9 @@ def generate_visualizations(
 
     print("  → Radar chart grid …")
     paths.append(_plot_radar_grid(summaries, plot_dir))
+
+    print("  → Radar chart (paper layout, large labels) …")
+    paths.extend(_plot_radar_paper(summaries, plot_dir))
 
     print("  → Similarity vs stat difference scatter …")
     paths.append(_plot_similarity_vs_diff(summaries, plot_dir))

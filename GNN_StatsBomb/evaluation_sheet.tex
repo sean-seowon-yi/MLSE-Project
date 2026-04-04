@@ -1,0 +1,540 @@
+\documentclass[11pt]{article}
+
+% ---------- Packages ----------
+\usepackage[margin=0.8in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{enumitem}
+\usepackage{parskip}
+\usepackage{setspace}
+\usepackage{titlesec}
+\usepackage{multicol}
+\usepackage[most]{tcolorbox}
+\usepackage{microtype}
+
+% ---------- General formatting ----------
+\setstretch{1.03}
+\setlength{\columnsep}{0.45in}
+\pagestyle{plain}
+\setlist[enumerate]{
+    noitemsep,
+    topsep=2pt,
+    leftmargin=1.4em,
+    itemsep=1pt
+}
+
+% ---------- Section styles ----------
+\titleformat{\section}
+  {\large\bfseries}
+  {}
+  {0em}
+  {}
+
+% ---------- Box style ----------
+\tcbset{
+  evalbox/.style={
+    enhanced,
+    colback=white,
+    colframe=black,
+    boxrule=0.6pt,
+    arc=1.5mm,
+    left=6pt,
+    right=6pt,
+    top=6pt,
+    bottom=6pt,
+    before skip=6pt,
+    after skip=6pt,
+    breakable=false
+  }
+}
+
+\begin{document}
+
+\begin{center}
+    {\LARGE\bfseries Player Similarity Model Evaluation Sheet}
+
+    \vspace{0.4em}
+    {\normalsize For each famous player below, five \emph{suggested} similar players are listed (same order for every model).}\\
+    {\normalsize Rate how reasonable those suggestions are as substitutes or stylistic equivalents: consider role, league level, and playing style.}\\
+    {\normalsize Enter a score from \textbf{1 (poor)} to \textbf{5 (excellent)} in the space beside each player.}\\
+    {\normalsize The six models are independent; treat each section on its own.}
+\end{center}
+
+\vspace{0.6em}
+
+% =====================================================
+\section*{Model 1: Baseline (GNN)}
+
+\begin{multicols}{2}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Manuel Neuer (Goalkeeper)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Jordan Pickford
+\item Dominik Livaković
+\item Lukáš Hrádecký
+\item Vanja Milinković Savić
+\item Daniel Bachmann
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Virgil van Dijk (Left Center Back)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Joe Rodon
+\item Philipp Lienhart
+\item Thiago Emiliano da Silva
+\item Jan Vertonghen
+\item Jannik Vestergaard
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Trent Alexander-Arnold (Right Defensive Midfield)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Ngoran Suiru Fai Collins
+\item Achraf Hakimi Mouh
+\item Kyle Walker
+\item Josip Stanišić
+\item Daniel Carvajal Ramos
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Kevin De Bruyne (Center Attacking Midfield)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Philip Foden
+\item Xavi Simons
+\item Antonín Barák
+\item Dries Mertens
+\item Eric Junior Dina Ebimbe
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Lionel Messi (Right Center Forward)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Cody Mathès Gakpo
+\item Che Adams
+\item Dušan Vlahović
+\item Steven Bergwijn
+\item Luis Alberto Suárez Díaz
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Kylian Mbappé (Left Wing)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Burak Yılmaz
+\item Ciro Immobile
+\item Kieffer Roberto Francisco Moore
+\item Bruno Petković
+\item Marco Asensio Willemsen
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\end{multicols}
+
+% =====================================================
+\section*{Model 2: Position-ablated + split context (GNN)}
+
+\begin{multicols}{2}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Manuel Neuer (Goalkeeper)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Jordan Pickford
+\item Andries Noppert
+\item Dominik Livaković
+\item Gianluigi Donnarumma
+\item Shūichi Gonda
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Virgil van Dijk (Left Center Back)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Joe Rodon
+\item Maya Yoshida
+\item Robin Hranáč
+\item Manuel Obafemi Akanji
+\item Willi Orban
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Trent Alexander-Arnold (Right Defensive Midfield)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Dmitriy Barinov
+\item Lutsharel Geertruida
+\item Daniel Alves da Silva
+\item Denis Lemi Zakaria Lako Lado
+\item Rodrigo Javier De Paul
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Kevin De Bruyne (Center Attacking Midfield)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Aaron Ramsey
+\item Piotr Zieliński
+\item Bruno Miguel Borges Fernandes
+\item Ondrej Duda
+\item Antoine Griezmann
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Lionel Messi (Right Center Forward)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Antoine Griezmann
+\item Arda Güler
+\item John McGinn
+\item Xherdan Shaqiri
+\item Dušan Tadić
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Kylian Mbappé (Left Wing)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Daniel Olmo Carvajal
+\item Diogo José Teixeira da Silva
+\item Sofiane Boufal
+\item João Félix Sequeira
+\item Jamal Musiala
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\end{multicols}
+
+% =====================================================
+\section*{Model 3: Split context, positional model (GNN)}
+
+\begin{multicols}{2}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Manuel Neuer (Goalkeeper)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Dominik Livaković
+\item Jordan Pickford
+\item Seung-Gyu Kim
+\item Mike Maignan
+\item Milan Borjan
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Virgil van Dijk (Left Center Back)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Philipp Lienhart
+\item Jannik Vestergaard
+\item Jan Vertonghen
+\item Riccardo Calafiori
+\item Thiago Emiliano da Silva
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Trent Alexander-Arnold (Right Defensive Midfield)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Elseid Hysaj
+\item Youssouf Sabaly
+\item Matty Cash
+\item Oleksandr Tymchyk
+\item Daniel Wass
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Kevin De Bruyne (Center Attacking Midfield)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Dries Mertens
+\item Eric Junior Dina Ebimbe
+\item Xavi Simons
+\item Naïm Sliti
+\item Bruno Miguel Borges Fernandes
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Lionel Messi (Right Center Forward)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Che Adams
+\item Georges Mikautadze
+\item Joel Nathaniel Campbell Samuels
+\item Sasa Kalajdzic
+\item Artem Dovbyk
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Kylian Mbappé (Left Wing)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Breel-Donald Embolo
+\item Artem Dzyuba
+\item Niclas Füllkrug
+\item Álvaro Borja Morata Martín
+\item Bruno Petković
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\end{multicols}
+
+% =====================================================
+\section*{Model 4: Position-ablated + split context + EMA (GNN)}
+
+\begin{multicols}{2}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Manuel Neuer (Goalkeeper)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Jordan Pickford
+\item Gianluigi Donnarumma
+\item Unai Simón Mendibil
+\item Hugo Lloris
+\item Dominik Livaković
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Virgil van Dijk (Left Center Back)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Joe Rodon
+\item Maya Yoshida
+\item Guram Kashia
+\item Boualem Khoukhi
+\item Manuel Obafemi Akanji
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Trent Alexander-Arnold (Right Defensive Midfield)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Lutsharel Geertruida
+\item Daniel Alves da Silva
+\item Éder Gabriel Militão
+\item Lucas Silva Melo
+\item Alistair Johnston
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Kevin De Bruyne (Center Attacking Midfield)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Robin Lod
+\item Aaron Ramsey
+\item Piotr Zieliński
+\item Lionel Andrés Messi Cuccittini
+\item Dušan Tadić
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Lionel Messi (Right Center Forward)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Antoine Griezmann
+\item Dušan Tadić
+\item John McGinn
+\item Lovro Majer
+\item Xherdan Shaqiri
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Kylian Mbappé (Left Wing)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Marcus Thuram
+\item Diogo José Teixeira da Silva
+\item Daniel Olmo Carvajal
+\item Cody Mathès Gakpo
+\item João Félix Sequeira
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\end{multicols}
+
+% =====================================================
+\section*{Model 5: Action dropout (GNN)}
+
+\begin{multicols}{2}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Manuel Neuer (Goalkeeper)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Andries Noppert
+\item Dominik Livaković
+\item Gianluigi Donnarumma
+\item Jordan Pickford
+\item Stole Dimitrievski
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Virgil van Dijk (Left Center Back)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Joe Rodon
+\item Guram Kashia
+\item Thiago Emiliano da Silva
+\item Manuel Obafemi Akanji
+\item Paulus Arajuuri
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Trent Alexander-Arnold (Right Defensive Midfield)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Lutsharel Geertruida
+\item Dmitriy Barinov
+\item Éder Gabriel Militão
+\item Daniel Alves da Silva
+\item Jurriën David Norman Timber
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Kevin De Bruyne (Center Attacking Midfield)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Aleksey Miranchuk
+\item Piotr Zieliński
+\item Marek Hamšík
+\item Aaron Ramsey
+\item Romano Schmid
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Lionel Messi (Right Center Forward)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Antoine Griezmann
+\item Xherdan Shaqiri
+\item Dušan Tadić
+\item Andrej Kramarić
+\item John McGinn
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Kylian Mbappé (Left Wing)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Daniel Olmo Carvajal
+\item Diogo José Teixeira da Silva
+\item João Félix Sequeira
+\item Marcus Thuram
+\item Lorenzo Insigne
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\end{multicols}
+
+% =====================================================
+\section*{Model 6: Action dropout + position + group uniformity (GNN)}
+
+\begin{multicols}{2}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Manuel Neuer (Goalkeeper)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Andries Noppert
+\item Dominik Livaković
+\item Hugo Lloris
+\item Unai Simón Mendibil
+\item Gianluigi Donnarumma
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Virgil van Dijk (Left Center Back)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Joe Rodon
+\item Philipp Lienhart
+\item Paulus Arajuuri
+\item Manuel Obafemi Akanji
+\item Rúben Santos Gato Alves Dias
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Trent Alexander-Arnold (Right Defensive Midfield)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Lutsharel Geertruida
+\item Rodrigo Javier De Paul
+\item Éder Gabriel Militão
+\item Jurriën David Norman Timber
+\item Dmitriy Barinov
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Kevin De Bruyne (Center Attacking Midfield)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Aaron Ramsey
+\item Piotr Zieliński
+\item Bruno Miguel Borges Fernandes
+\item Antoine Griezmann
+\item Aleksey Miranchuk
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Lionel Messi (Right Center Forward)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Antoine Griezmann
+\item Xherdan Shaqiri
+\item Arda Güler
+\item Andrej Kramarić
+\item Dries Mertens
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\begin{samepage}
+\begin{tcolorbox}[evalbox,title=\textbf{Kylian Mbappé (Left Wing)} \hfill Score:\ \rule{1cm}{0.4pt}]
+\begin{enumerate}
+\item Daniel Olmo Carvajal
+\item Diogo José Teixeira da Silva
+\item Cody Mathès Gakpo
+\item Marcus Thuram
+\item Raheem Sterling
+\end{enumerate}
+\end{tcolorbox}
+\end{samepage}
+
+\end{multicols}
+
+\end{document}

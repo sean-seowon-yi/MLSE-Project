@@ -62,6 +62,19 @@ Outcome uses only h_event (no z_p) because possession outcomes are driven by gam
 
 ---
 
+## Position ablation (`--ablate_position`)
+
+When `ModelConfig.ablate_position = True`, all explicit position information is removed from the model:
+
+- **PlayerProjection**: The 16-D position embedding is replaced with a zero vector, so player nodes carry only the team flag and spatial offset (dx, dy). The model must learn player role structure purely from behavioral patterns.
+- **FiLM conditioning**: The dedicated `pos_emb` embedding is replaced with zeros, so the conditioning vector is effectively `[z_p ; 0]`. Action prediction cannot shortcut through positional role.
+
+Position indices remain available in graph metadata for contrastive hard-negative mining (same-position-group negatives still work), but they do not enter the learned representations.
+
+This ablation is critical for the `pos_ablated_split_ctx` family of models, which combine position ablation with split-context edges and strong uniformity loss (lambda=1.0, t=4.0) to produce the best-performing embeddings for substitute retrieval. Registry pipelines `acts_in_dropout`, `acts_in_dropout_pos`, and `acts_in_dropout_pos_gu` extend that family with action-stream dropout and optional position / group-uniformity terms; see [EVALUATION_RESULTS.md](EVALUATION_RESULTS.md) for metrics.
+
+---
+
 ## Split context edges
 
 When `--split_context_edges` is active, the GNN encoder allocates separate `GATv2Conv` parameters for `context_for_tm` and `context_for_opp` instead of a single `context_for`. The edge type list is determined by `get_edge_types(split_context)` in `gnn_encoder.py`, driven by `GraphConfig.split_context_edges`.
@@ -95,6 +108,7 @@ The model constructor accepts an optional `graph_config` parameter to configure 
 | `n_action_types` | 14 |
 | `n_angle_bins` | 9 |
 | `n_length_bins` | 5 |
+| `ablate_position` | False (True for pos_ablated variants) |
 
 ---
 

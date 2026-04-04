@@ -1,6 +1,6 @@
 # Phase 6: Inference, Evaluation & Similarity Search
 
-Phase 6 generates a **global player embedding** `z_p` per player from all their possessions (with the same future-info masking as training), supports **similarity search** by cosine similarity, and provides three **embedding-quality diagnostics**: pseudo ground-truth evaluation, self-consistency testing, and policy distance analysis.
+Phase 6 generates a **global player embedding** `z_p` per player from all their possessions (with the same future-info masking as training), supports **similarity search** by cosine similarity, and provides **embedding-quality diagnostics**: pseudo ground-truth evaluation, self-consistency, policy distance analysis, plus **embedding-only** metrics (position retrieval, split-half for heuristics, qualitative neighbours).
 
 ---
 
@@ -11,6 +11,7 @@ Phase 6 generates a **global player embedding** `z_p` per player from all their 
 - **6C**: Evaluate embeddings against externally sourced player-similarity pairs (ground truth).
 - **6D**: Test embedding stability via self-consistency (competition-split + random-half).
 - **6E**: Validate that cosine similarity corresponds to behavioral similarity (policy diagnostic).
+- **6F**: Optional embedding-only checks (position-group retrieval, split-half for heuristic embeddings, qualitative neighbour tables).
 
 ---
 
@@ -73,18 +74,12 @@ python main.py --mode search --player_id 5503
 
 ## 6C: Pseudo ground-truth evaluation (`--mode ground_truth`)
 
-Evaluates the embedding space against externally sourced player-similarity pairs drawn from public StatsBomb analysis articles. Ten pairs are defined across three tiers:
-
-| Tier | Description | Examples |
-|------|-------------|---------|
-| 1 | Strong directional expectation | Miedema ↔ Caldentey, TAA ↔ Hakimi, Alba ↔ Robertson |
-| 2 | Good directional expectation | Kroos ↔ Enzo Fernandez, TAA ↔ Maehle, Sancho ↔ Vargas |
-| 3 | Weak / conditional expectation | Kane ↔ Leao, Kane ↔ Felix, Uduokhai ↔ Souttar |
+Evaluates the embedding space against **curated** player-similarity pairs (research-backed expectations). The current pair list, tiering, and **rationale for each pair** are documented in **[pseudo_ground_truth.md](pseudo_ground_truth.md)** (design only; that file intentionally omits metric results).
 
 For each pair (A, B):
 
 1. Compute cosine similarity between `z_A` and `z_B`.
-2. Find B's rank in A's nearest-neighbour list (and vice versa).
+2. Find B's rank in A's nearest-neighbour list (and vice versa), with **gender-aware** filtering on both directions.
 
 Aggregate metrics: mean/median rank, hit@5/10/20/50, per-tier breakdowns, and bootstrap 95% confidence intervals on mean rank and hit@10.
 
@@ -94,6 +89,7 @@ Aggregate metrics: mean/median rank, hit@5/10/20/50, per-tier breakdowns, and bo
 |------|---------|
 | `ground_truth_report.txt` | Human-readable per-pair results with verdict |
 | `ground_truth_results.json` | Structured results with run provenance appended |
+| `gt_*.png` | Visual summaries (e.g. rank overview, hit@k, similarity vs rank) |
 
 ---
 
@@ -129,6 +125,7 @@ Self-cosine (mean/median/std), cross-cosine, cosine margin, self-retrieval ranks
 |------|---------|
 | `self_consistency_report.txt` | Per-test summary with best/worst retrievals |
 | `self_consistency_results.json` | Structured results with run provenance appended |
+| `sc_*.png` | Plots (e.g. hit@k, rank CDF, position breakdown) |
 
 ---
 
@@ -169,6 +166,21 @@ Interpretation: JS > 0.1 strong effect, 0.01–0.1 moderate, < 0.01 weak.
 |------|---------|
 | `policy_diagnostic_report.txt` | Three-section report with per-group breakdowns |
 | `policy_diagnostic_results.json` | Structured results with run provenance appended |
+| `pd_*.png` | Diagnostic figures (correlation by group, substitute quality, FiLM sensitivity, etc.) |
+
+---
+
+## 6F: Embedding-space diagnostics (`embedding_eval.py`)
+
+These run automatically inside **`full_eval`** / **`eval_heuristics`** and can be run standalone (`--mode position_retrieval`, `split_half`, `qualitative_neighbors`):
+
+| Mode | What it measures | Notes |
+|------|------------------|-------|
+| **position_retrieval** | Fraction of top‑K neighbours in the same coarse position group as the query | Works on any embedding matrix (GNN or heuristic). |
+| **split_half** | Split each player’s events in half, rebuild embedding with an `embed_fn`, self-retrieval rank | **GNN:** skipped (`embed_fn=None`). **Heuristics** (`mean_features`, `action_profile`): uses event-based `embed_fn`. **FIFA heuristic:** skipped. |
+| **qualitative_neighbors** | Top‑K neighbours for a fixed list of notable players; table + plot | Good for sanity checks and demos. |
+
+Outputs per mode: JSON, text report, and PNG where applicable.
 
 ---
 
@@ -181,8 +193,10 @@ Interpretation: JS > 0.1 strong effect, 0.01–0.1 moderate, < 0.01 weak.
 | Ground-truth pair evaluation | `src/phase6_inference/ground_truth.py` |
 | Self-consistency evaluator | `src/phase6_inference/self_consistency.py` |
 | Policy diagnostic (JS correlation, substitute quality, FiLM sensitivity) | `src/phase6_inference/policy_diagnostic.py` |
+| Position retrieval, split-half, qualitative neighbours | `src/phase6_inference/embedding_eval.py` |
 | Embedding provenance (manifest build/validate) | `src/phase6_inference/provenance.py` |
-| CLI entry | `main.py` → `--mode inference` / `search` / `ground_truth` / `self_consistency` / `policy_diagnostic` |
+| CLI entry | `main.py` → `--mode inference` / `search` / `ground_truth` / `self_consistency` / `policy_diagnostic` / `position_retrieval` / `split_half` / `qualitative_neighbors` |
+| Name → `player_id` (accent + fuzzy) | `find_player.py` (project root under `GNN_StatsBomb/`) |
 
 ---
 
@@ -208,6 +222,10 @@ python main.py --mode policy_diagnostic
 # With experiment tag
 python main.py --mode inference --tag split_ctx --split_context_edges
 python main.py --mode ground_truth --tag split_ctx --split_context_edges
+
+# Position-ablated + split-ctx + EMA alignment
+python main.py --mode inference --tag pos_ablated_split_ctx_ema --split_context_edges --ablate_position
+python main.py --mode ground_truth --tag pos_ablated_split_ctx_ema --split_context_edges --ablate_position
 ```
 
 Requires Phase 1–3 outputs and a trained checkpoint (Phase 5). Embedding outputs go to `embeddings/baseline/` (or `embeddings/{tag}/`).
@@ -220,10 +238,9 @@ All similarity-based modes (`search`, `ground_truth`, `self_consistency`, `polic
 
 Validates the GNN similarity system against external FIFA/EA Sports FC player attributes. Requires pre-matched FIFA CSVs in `FIFA_data/` (generated by `match_fifa_players.py`).
 
-- Samples 10 male + 10 female players (stratified by position, random each run).
+- Samples 10 male + 10 female players (stratified by position, random each run), plus famous players when available.
 - For each, finds the top-1 same-gender substitute via GNN cosine similarity that also has FIFA data.
-- Compares 6 main stats and 34 sub-attributes; computes Spearman correlation.
-- Generates 4 visualizations (radar charts, scatter, stat breakdown, summary dashboard).
+- Compares main and sub-attributes; multiple PNG summaries (radar grid with GK-aware axes, similarity vs stat distance, breakdowns, summary-style charts, sub-attribute heatmaps).
 
 ### Unified evaluation (`--mode full_eval`, `--mode full_eval_all`)
 
@@ -231,10 +248,10 @@ Run all post-training evaluations for one or all pipeline variants:
 
 ```bash
 python main.py --mode full_eval                             # current tag
-python main.py --mode full_eval_all --eval_output_dir ./evaluations  # all 4 variants
+python main.py --mode full_eval_all --eval_output_dir ./evaluations  # all 11 registered pipelines
 ```
 
-Outputs are organized under `evaluations/{pipeline_name}/{step_name}/`.
+**Eleven steps** per pipeline: `inference`, `test_metrics`, `ground_truth`, `position_retrieval`, `split_half` (skipped for GNN), `qualitative_neighbors`, `self_consistency`, `policy_diagnostic`, `empirical_behavioral`, `analysis`, `fifa_comparison`. Outputs: `evaluations/{pipeline_name}/{step_name}/`. Heuristic orchestration: `generate_heuristics`, `eval_heuristics`, `full_eval_all_with_heuristics`.
 
 ---
 

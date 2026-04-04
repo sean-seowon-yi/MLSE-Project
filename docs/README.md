@@ -21,11 +21,12 @@ Pipeline-specific docs live inside each GNN subfolder.
   - [GNN_SkillCorner/docs/PIPELINE_DETAILS.md](../GNN_SkillCorner/docs/PIPELINE_DETAILS.md) — Phases from raw tracking to player embeddings; graph construction, GATv2 autoencoder, training, and validation.
 
 - **StatsBomb 360 pipeline** (`GNN_StatsBomb/`)
+  - [GNN_StatsBomb/README.md](../GNN_StatsBomb/README.md) — Quick start, CLI summary, `full_eval` steps, heuristics, `find_player.py`.
   - [GNN_StatsBomb/SYSTEM_DESIGN.md](../GNN_StatsBomb/SYSTEM_DESIGN.md) — End-to-end system design: 126‑D encoding, possession & graph construction, model, losses, Phase 7 analysis.
   - [GNN_StatsBomb/docs/README.md](../GNN_StatsBomb/docs/README.md) — Index of all phase docs (PHASE1–PHASE7) and related references.
   - [GNN_StatsBomb/docs/DATA_QUALITY.md](../GNN_StatsBomb/docs/DATA_QUALITY.md) — Data quality, missing data, edge cases.
   - [GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md](../GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md) — SOTA assessment, critical vulnerabilities & blind spots, improvement roadmap.
-  - [GNN_StatsBomb/docs/EVALUATION_RESULTS.md](../GNN_StatsBomb/docs/EVALUATION_RESULTS.md) — Baseline and ablation study results, policy diagnostics, and FIFA comparison.
+  - [GNN_StatsBomb/docs/EVALUATION_RESULTS.md](../GNN_StatsBomb/docs/EVALUATION_RESULTS.md) — Cross-model evaluation results, policy diagnostics, empirical behavioral metrics, and FIFA comparison.
 
 Together with the root [README.md](../README.md), these give a complete picture of what the system does (player similarity by behaviour in context) and how each phase is implemented.
 

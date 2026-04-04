@@ -29,22 +29,26 @@ Analysis behaviour is controlled by `ReportConfig` in `report_builder.py`:
 
 ## Outputs
 
-All artifacts are written under `embeddings/{tag}/analysis/` (or `embeddings/baseline/analysis/` for the baseline run).
+Artifacts are written under **`embeddings/{tag}/analysis/`** when you run `--mode analyze` alone, or under **`evaluations/{tag}/analysis/`** when Phase 7 is invoked from **`full_eval`**.
 
 - **Text reports**: `report_<player_id>.txt` — per-situation predicted action type, direction, and length distributions for query and candidates.
 - **Bar charts (per situation)**:
   - `situation_<player_id>_s<N>_actions.png` — grouped bars comparing action-type probabilities across players.
   - `situation_<player_id>_s<N>_direction.png` — angle-bin (direction) probabilities across players.
-- **PCA plots**:
-  - **Global** (all players, same 2D coordinates):  
-    `embeddings_pca.png` (coloured by position **group**: GK / Defender / Midfielder / Forward),  
-    `embeddings_pca_subgroup.png` (coloured by **subgroup**: e.g. Center Back, Full Back, Defensive Mid, Central Mid, Wide Mid, Forward, etc.),  
-    `embeddings_pca_position.png` (coloured by full **position** name, all 26+).
-  - **Per-query neighbourhood**: `pca_neighbourhood_<player_id>.png` — same 2D space with query and top-k neighbours highlighted and labelled.
+- **PCA plots** (2D projection with PCA):
+  - **Global**: `embeddings_pca.png` (position **group**), `embeddings_pca_subgroup.png` (**subgroup**), `embeddings_pca_position.png` (full **position** name).
+  - **Per-query neighbourhood**: `pca_neighbourhood_<player_id>.png` — query and top-k neighbours highlighted and fully labelled.
+- **t-SNE plots** (same layout as PCA; skipped if too few players for a stable perplexity):
+  - **Global**: `embeddings_tsne.png`, `embeddings_tsne_subgroup.png`, `embeddings_tsne_position.png`.
+  - **Per-query neighbourhood**: `tsne_neighbourhood_<player_id>.png`.
 
 Subgroups are defined in `src/config.py` via `POSITION_SUBGROUPS` (mapping from each position name to one of ~8 categories).
 
 ---
+
+## Possession animation (`--mode possession_animation`)
+
+Separate from `analyze`, this mode renders **MP4/GIF** videos of one or more possession graphs: pitch, ball trail (event locations), freeze-frame players, and predicted actions for **two players** (counterfactual) or **dynamic substitute** mode (on-ball actor vs top-1 cosine neighbour). Supports ground-truth vs prediction labelling for the actor, multi-segment possession chains, and smooth export settings. Requires `--pipeline`, trained checkpoint, embeddings, and graphs. See `main.py` docstring and `src/phase7_analysis/possession_animation.py`.
 
 ## Code
 
@@ -52,8 +56,9 @@ Subgroups are defined in `src/config.py` via `POSITION_SUBGROUPS` (mapping from 
 |-----------|----------|
 | Report orchestration | `src/phase7_analysis/report_builder.py` |
 | Counterfactual action prediction (FiLM + heads) | `src/phase7_analysis/situation_comparison.py` |
-| Embedding PCA visualisation (group, subgroup, position, neighbourhood) | `src/phase7_analysis/embedding_viz.py` |
-| CLI entry | `main.py` → `--mode analyze` |
+| Embedding PCA + t-SNE visualisation (group, subgroup, position, neighbourhood) | `src/phase7_analysis/embedding_viz.py` |
+| Possession animation (MP4/GIF) | `src/phase7_analysis/possession_animation.py` |
+| CLI entry | `main.py` → `--mode analyze` or `--mode possession_animation` |
 
 ---
 

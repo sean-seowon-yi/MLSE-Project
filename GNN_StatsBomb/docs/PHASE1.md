@@ -83,6 +83,8 @@ All coordinates and relevant scalars are normalised/clipped so the matrix has no
 | **feature_names.json** | List of 126 feature names (for slicing/debugging). |
 | **data_stats.json** | Summary: `n_events`, `n_players`, `n_teams`, `n_matches`, `n_competitions`, `feature_dim`, `event_type_counts`, `mirror_sides`, `use_360`. |
 
+**Representative scale (default open data + 360, no CLI filters):** on a typical checkout this produces about **737k** events, **323** matches, **7** competition–season pairs, and **~52k** possessions after Phase 2 filters — see `SYSTEM_DESIGN.md` § Dataset → Scale for exact figures from one measured run. Your `data_stats.json` is authoritative for your tree.
+
 If any NaN/Inf are found in the feature matrix, they are replaced by 0 before saving and a warning is printed.
 
 ---

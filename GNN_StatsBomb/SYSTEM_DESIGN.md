@@ -32,7 +32,7 @@ Ball Recovery, Block, Carry, Clearance, Dribble, Duel, Foul Committed, Foul Won,
 
 ### Scale
 
-From the available competitions/seasons with 360 data: ~51,000 possessions, ~737,000 events, covering hundreds of players across multiple leagues.
+With the default StatsBomb open-data snapshot (all competition–seasons that ship 360 files, no extra filters), a full Phase 1–2 run on a typical checkout yields on the order of **737,020** on-ball events (with 360 frames), **51,778** possessions after the min/max event filters, **323** matches, and **7** distinct `(competition_id, season_id)` pairs. Counts change if StatsBomb adds matches, you pass `--competition` / `--season`, or you set `use_360=False`. After Phase 5’s minimum-possession filter, about **1,633** players receive embeddings.
 
 ---
 
@@ -57,18 +57,22 @@ Phase 6: Embedding generation                          --mode inference
          Pseudo ground-truth evaluation                --mode ground_truth
          Self-consistency evaluation                   --mode self_consistency
          Policy diagnostic                             --mode policy_diagnostic
+         Embedding-only metrics                        --mode position_retrieval | split_half | qualitative_neighbors
     ↓
 Phase 7: Analysis (situation-level comparison)         --mode analyze
          FIFA stat comparison                          --mode fifa_comparison
+         Possession animation (MP4/GIF visualisation)   --mode possession_animation
+         Empirical behavioral fidelity (standalone)    --mode empirical_behavioral
          Full evaluation (single pipeline)             --mode full_eval
          Full evaluation (all variants)                --mode full_eval_all
+         Heuristics + same eval layout                  --mode generate_heuristics | eval_heuristics | full_eval_all_with_heuristics
 ```
 
 `--mode full_pipeline` runs Phases 1→2→3→5→6A end-to-end. Search and evaluation modes require embeddings to already exist.
 
 ### Experiment Tagging
 
-The `--tag` flag namespaces Phase 3+ outputs (graphs, checkpoints, embeddings) while sharing Phase 1–2 data. The `--split_context_edges` flag must be passed consistently across all phases of the same experiment (it changes graph structure and model architecture). Combined workflow:
+The `--tag` flag namespaces **checkpoints and embeddings** while sharing Phase 1–2 data and (per `graphs_filename`) the shared graph pickle(s). Multiple tags can reuse the same `possession_graphs.pkl` or `possession_graphs_split_ctx.pkl` when their graph topology matches. The `--split_context_edges` flag must be passed consistently across all phases of the same experiment (it changes graph structure and model architecture). Combined workflow:
 
 ```
 python main.py --mode build_graphs   --tag split_ctx --split_context_edges
@@ -172,7 +176,7 @@ Each possession also stores per-event timestamps with millisecond precision (par
 
 The 360 freeze frames are critical: they create context edges that tell the GNN about off-ball player positioning. When `--split_context_edges` is used, these are split into `context_for_tm` (teammate) and `context_for_opp` (opponent), allowing `HeteroConv` to learn separate projection matrices and attention weights for offensive options vs defensive pressure, rather than forcing the attention mechanism to distinguish teams using only the `is_possession_team` node feature. This is the spatial context that makes a "situation" well-defined.
 
-**Output**: `possession_graphs.pkl` (or `possession_graphs_{tag}.pkl` when `--tag` is used) — list of `HeteroData` objects.
+**Output**: Graphs are written to `processed_data/` using `Config.graphs_filename`: `possession_graphs.pkl` when `split_context_edges=False`, or `possession_graphs_split_ctx.pkl` when `split_context_edges=True`. The filename keys off **graph topology**, not `--tag` — tagged experiments share the same graph file when their split-context setting matches (see `apply_tag` in `config.py`). Checkpoints and embeddings are still namespaced by tag.
 
 ### Data Processing Reasoning
 
@@ -254,6 +258,17 @@ This is then passed to the action prediction heads (action type, direction, leng
 
 The outcome head uses `h_event` only (no `z_p`) because possession outcomes depend more on game state than individual player tendencies.
 
+#### 6. Position Ablation (optional)
+
+When `ModelConfig.ablate_position = True` (CLI: `--ablate_position`), all explicit position information is removed from the learned representations:
+
+- **PlayerProjection**: The position embedding table is not used; only the three continuous features (team flag, dx, dy) are passed through the MLP.
+- **FiLM**: With ablation, `film_pos_embed` is `None` and `film_condition` uses **`z_p` alone** (64-D) for `film_gamma` / `film_beta` — there is no concatenated zero padding; the linear layers are sized for 64-D input in this mode.
+
+Position indices remain in graph metadata for contrastive hard-negative mining. This forces the model to learn behavioral representations without positional shortcuts, allowing `z_p` to encode purely stylistic traits rather than role assignment.
+
+The `pos_ablated_split_ctx` family combines this with split-context edges and increased uniformity pressure (λ_pooled=1.0, t=4.0), yielding **among the strongest** retrieval and cross-competition metrics in the suite; the top weighted composite score in `EVALUATION_RESULTS.md` is `acts_in_dropout_pos_gu`, which builds on the same split-context + ablation stack with additional regularizers.
+
 ---
 
 ## Phase 5: Training
@@ -287,8 +302,10 @@ What survives masking (the "situational state"):
 The total loss is:
 
 ```
-L = L_action + 0.5 · L_outcome + 0.5 · L_contrastive + 0.3 · L_pooled_uniformity
+L = L_action + 0.5 · L_outcome + 0.5 · L_contrastive + 0.3 · L_pooled_uniformity [+ 0.3 · L_alignment]
 ```
+
+The alignment term is optional, activated by `ema_alignment=True`. Default weights shown; all are configurable.
 
 #### L_action: Focal Loss with Class Weights
 
@@ -317,6 +334,8 @@ sim(i,j) = normalize(z_i) · normalize(z_j) / τ       where τ = 0.05
 
 Hard negatives prevent the loss from being satisfied by merely encoding positional role. The model must learn fine-grained individual differences within each role.
 
+The contrastive softmax denominator includes **positive pairs and hard negatives** (standard supervised contrastive / InfoNCE form), not negatives alone.
+
 #### L_pooled_uniformity: Gaussian-potential uniformity on pooled z_p
 
 Directly penalises pooled `z_p` vectors (the embeddings used for similarity search) that are too close on the unit hypersphere:
@@ -329,12 +348,27 @@ The expectation is over all pairs of distinct pooled players in the batch. This 
 
 Weight: 0.3.
 
-#### How the four loss terms complement each other
+#### L_alignment: EMA Cross-Batch Alignment (optional)
+
+When `ema_alignment=True`, an additional loss term encourages a player's pooled `z_p` to remain consistent across batches:
+
+```
+L_alignment = 1 - cosine_similarity(z_p_current, z_p_ema)
+```
+
+An **EMA memory bank** maintains a smoothed historical embedding for each player (`momentum=0.999`). Before computing the loss, the bank is queried for each player in the batch; the alignment loss is averaged over players with valid history (i.e., seen in a previous batch). After the optimizer step, the bank is updated with the current batch's `z_p` (detached). The bank state is saved in checkpoints for resume compatibility.
+
+This addresses a gap in the standard training: without this term, a player's `z_p` can differ across batches (where different subsets of possessions are sampled) with no explicit penalty. The EMA alignment acts as a temporal regularizer, promoting embedding stability.
+
+Weight: 0.3 (configurable via `lambda_alignment`).
+
+#### How the loss terms complement each other
 
 - **Contrastive (h_player)**: Within-batch alignment (same player → close) and within-role separation (different players in same position group → apart). Operates on pre-pooling embeddings where positive pairs exist.
 - **Pooled uniformity (z_p)**: Spreads pooled embeddings uniformly on the hypersphere, directly improving the cosine similarity space used for downstream search. Re-establishes cross-role separation (e.g., GK far from outfield).
 - **Action loss via FiLM**: Forces `z_p` to capture behavioral differences between players, because predictions are multiplicatively dependent on it.
 - **Outcome loss**: Provides a secondary signal to shape event representations toward possession-level outcomes.
+- **EMA alignment (z_p, optional)**: Promotes cross-batch self-consistency in pooled embeddings. Without it, `z_p` can drift when different possession subsets are sampled. Complements uniformity (which spreads embeddings apart) by anchoring each player's position on the hypersphere across training iterations.
 
 ### Training Details
 
@@ -367,7 +401,7 @@ When `--player_sampling` is set, the standard random-shuffle DataLoader is repla
 - **K** (`players_per_batch`, default 16): distinct players per batch
 - **M** (`possessions_per_player`, default 6): possessions sampled per player
 
-This guarantees that every batch contains multiple possessions per player, ensuring the InfoNCE contrastive loss always has positive pairs. Without this, random shuffling produces batches where most players appear only once, starving the contrastive loss of signal.
+This guarantees that every batch contains multiple possessions per player, ensuring the InfoNCE contrastive loss always has positive pairs. Without this, random shuffling produces batches where most players appear only once, starving the contrastive loss of signal. When the in-epoch player pool runs low, it is **extended** with a fresh shuffle so leftover players are not dropped.
 
 When `--player_sampling` is active, the CLI also applies a tuned hyperparameter preset: temperature 0.15, λ_contrast 0.15, λ_pooled 0.5, with cosine annealing enabled for both temperature and pooled uniformity weight.
 
@@ -382,7 +416,236 @@ The `val_supervised` metric used for early stopping and LR scheduling is deliber
 
 #### Test-Set Evaluation
 
-After training, the best checkpoint can be evaluated on the held-out test set (`--mode evaluate`, same split, seed=42). Metrics: action type / angle bin / length bin accuracy and macro F1, plus outcome accuracy, BCE, and AUC-ROC for ends_in_shot and ends_in_goal. Outputs: `checkpoints/{tag}/evaluation/test_metrics.json` and confusion-matrix and ROC plots.
+After training, the best checkpoint can be evaluated on the held-out test set (`--mode evaluate`, same split, seed=42). Metrics: action type / angle bin / length bin accuracy and macro F1, plus outcome accuracy, BCE, and AUC-ROC for ends_in_shot and ends_in_goal. Default output directory: **`evaluations/{tag}/test_metrics/`** (`test_metrics.json`, confusion matrices, ROC plots). The same folder is used when `evaluate` runs as step 2 of `full_eval`.
+
+---
+
+## Model Variation Components & Pipeline Registry
+
+### Overview
+
+The system supports eight modular architectural and training components that can be independently toggled to form distinct pipeline variants. Each component addresses a specific hypothesis about what makes a good player-similarity embedding. The `PIPELINE_REGISTRY` in `main.py` defines 11 named combinations of these components (plus one archived run), and `--mode full_eval_all` evaluates all of them under a unified evaluation suite.
+
+The components are presented in roughly the order they were developed, each motivated by a limitation observed in previous variants.
+
+### Component 1: Split-Context Edges
+
+**Config**: `GraphConfig.split_context_edges` (default `False`). CLI: `--split_context_edges`.
+
+**What it does**: Splits the single `(player, context_for, event)` edge type into two relation types:
+- `(player, context_for_tm, event)` — teammate 360-frame context
+- `(player, context_for_opp, event)` — opponent 360-frame context
+
+Each relation gets its own learned projection matrix and attention weights inside `HeteroConv`.
+
+**Why it exists**: A teammate 3 metres ahead is a passing option; an opponent 3 metres ahead is a pressing threat. With a single edge type, the GNN must learn to distinguish these from a single scalar feature (`is_possession_team`). Splitting gives the attention mechanism structurally different pathways for offensive support and defensive pressure.
+
+**Effect on results**: `split_ctx` alone (without position ablation) produces the best pseudo-GT mean rank among all models (56.1) and the best hit@50 when combined with EMA alignment (0.700 for `pos_ablated_split_ctx_ema`). However, split-context edges alone do not improve behavioral fidelity — `split_ctx` has the worst Spearman rho (0.710) and worst absolute top-k JS (0.004611) among non-collapsed models, indicating its embeddings retrieve positional peers rather than behavioral matches. The component's value is unlocked when combined with position ablation (Component 2), which forces the model to use the teammate/opponent distinction for behavioral reasoning rather than positional shortcuts.
+
+### Component 2: Position Ablation
+
+**Config**: `ModelConfig.ablate_position` (default `False`). CLI: `--ablate_position`.
+
+**What it does**: Removes all explicit position information from the learned representation:
+- **PlayerProjection**: The 16-D position embedding is skipped; player nodes are projected from only 3 continuous features (team flag, dx, dy).
+- **FiLM conditioning**: The dedicated `pos_emb` channel is zeroed; scale/shift parameters are computed from `z_p` alone (64-D input instead of 80-D).
+
+Position indices remain in graph metadata (`player.x[:, 0]`) for hard-negative mining in the contrastive loss.
+
+**Why it exists**: When position is available, the model can satisfy the action-prediction loss with a simple rule — "Left Wings cross, Center Backs clear" — without differentiating individual players. FiLM gamma/beta converge toward values that mostly encode positional role, leaving `z_p` with little capacity for individual style. Removing position forces `z_p` to learn the behavioral repertoire of each player from raw event patterns and spatial context, making the embedding space capture style rather than role assignment.
+
+**Effect on results**: `pos_ablated` (position ablation alone, without split-context) achieves the highest Spearman rho (0.974) across all models, meaning embedding proximity correlates strongly with behavioral similarity. However, this high rho is an artifact of embedding compression — all players look similar (mean cosine distance 0.085) — which makes retrieval noisy (GT mean rank 69.6, competition-split mean rank 81.3). Position ablation requires strong uniformity pressure (Component 4) to spread embeddings apart and produce useful retrieval.
+
+### Component 3: Player-Aware Batch Sampling
+
+**Config**: `TrainingConfig.player_sampling` (default `False`). CLI: `--player_sampling`.
+
+**What it does**: Replaces the default random-shuffle DataLoader with `PlayerAwareBatchSampler`, which constructs each batch as K players × M possessions (default K=16, M=6, effective batch size 96). This guarantees every batch contains multiple possessions per player, ensuring the InfoNCE contrastive loss always has positive pairs.
+
+When active, the system also applies a tuned hyperparameter preset:
+- Contrastive temperature: 0.15 (warmer than default 0.05)
+- λ_contrast: 0.15 (reduced)
+- λ_pooled: 0.5 (increased)
+- Cosine annealing: temperature 0.15→0.02, pooled weight 0.10→0.50
+
+**Why it exists**: With random shuffling at batch size 96, most players appear only once per batch, starving the contrastive loss of positive pairs. Player-aware sampling guarantees 6 possessions per player per batch, producing (6 choose 2)=15 positive pairs per player for InfoNCE. The hypothesis was that richer contrastive signal would produce tighter per-player clusters and better retrieval.
+
+**Effect on results**: Player-sampling models (`player_samp`, `split_ctx_ps`) achieve the best random-half self-consistency (mean rank 2.7–2.9, hit@10 0.94–0.95) and highest supervised F1 (0.700 for `player_samp`). However, they fail at the substitute-finding task: tier-1 hit@10 = 0.0 (cannot place any of the five strongest pairs in the top 10), competition-split mean rank > 89, and Spearman rho < 0.79. The training signal "same player = close" does not teach the model what makes two *different* players functionally similar. The strong within-context consistency is a direct consequence of the sampling mechanism, not emergent generalization — the model excels at player re-identification but underperforms at cross-player similarity retrieval. This is the "player-sampling paradox" discussed in `EVALUATION_RESULTS.md` §9.4.
+
+### Component 4: Uniformity Sensitivity (t) and Weight (λ_pooled)
+
+**Config**: `TrainingConfig.uniformity_t` (default 2.0), `TrainingConfig.lambda_pooled_contrast` (default 0.3). CLI: `--uniformity_t`, `--lambda_pooled`.
+
+**What it does**: Controls the Gaussian-potential uniformity loss applied to pooled `z_p` vectors:
+
+```
+L_uniform = log E[ exp(-t · ||z_i - z_j||²) ]
+```
+
+Parameter `t` controls sensitivity — higher values concentrate the gradient on the closest pairs, penalising embedding compression more aggressively. Parameter `λ_pooled` controls the loss weight in the total objective.
+
+**Why it exists**: Without uniformity pressure, attention-pooled `z_p` vectors collapse into a narrow cone where all players have cosine similarity > 0.99. This happens because averaging over many possessions pulls every player's embedding toward the population mean. The uniformity loss pushes all `z_p` apart on the unit hypersphere, widening cosine-similarity gaps so that "similar" and "dissimilar" players occupy meaningfully different regions.
+
+Position ablation (Component 2) creates an especially strong dependency on uniformity: without positional shortcuts, the action loss alone provides weaker gradient signal for separating `z_p` vectors. The `pos_ablated_split_ctx` family uses elevated settings (t=4.0, λ_pooled=1.0) — roughly 3× the default weight — to counteract this.
+
+**Effect on results**: The `pos_ablated_split_ctx` family (t=4.0, λ_pooled=1.0) achieves the best competition-split mean ranks (67.3–67.7) and strong behavioral fidelity (rho 0.929–0.944). Critically, `pos_ablated_split_ctx_v2` reduced λ_pooled from 1.0 to 0.7 (a 30% reduction) while keeping t=4.0, and the result was catastrophic: GT mean rank 198.8, competition-split mean rank 200.8, random-half hit@10 0.094. This confirms that position ablation creates a hard dependency on uniformity pressure — even a modest reduction causes representational collapse. The threshold effect suggests that λ_pooled=1.0 is near the minimum viable weight for the position-ablated architecture.
+
+### Component 5: EMA Cross-Batch Alignment
+
+**Config**: `TrainingConfig.ema_alignment` (default `False`), `TrainingConfig.lambda_alignment` (default 0.3), `TrainingConfig.ema_momentum` (default 0.999). CLI: `--ema_alignment`, `--lambda_alignment`, `--ema_momentum`.
+
+**What it does**: Adds a cosine-alignment loss that encourages each player's pooled `z_p` to remain consistent across training batches:
+
+```
+L_alignment = 1 - cosine_similarity(z_p_current, z_p_ema)
+```
+
+An EMA memory bank (`EMAPlayerMemoryBank`) maintains a momentum-updated historical embedding for each player (decay 0.999). Before the loss computation, the bank is queried for each player in the current batch; players with stored history contribute to the alignment loss. After the optimizer step, the bank is updated with current `z_p` values (detached from the computation graph). Bank state is saved in checkpoints for resume compatibility.
+
+**Why it exists**: Standard training with random batching means a player's `z_p` is computed from a different subset of possessions each epoch. Without an explicit consistency signal, `z_p` can drift — the model might assign subtly different embeddings depending on which 6 (out of 200) possessions happen to be in the batch. EMA alignment acts as a temporal regularizer that anchors each player's position on the hypersphere. It complements the uniformity loss (which pushes embeddings apart globally) by adding a per-player stability constraint.
+
+**Effect on results**: Two variants were tested:
+- `pos_ablated_split_ctx_ema` (λ_alignment=0.3): Best pseudo-GT hit@50 (0.700), best GT mean rank (62.6), and highest rho among fully-evaluated models (0.944). However, it trades supervised F1 (0.650, the lowest among non-collapsed split-ctx runs) and random-half consistency (mean rank 9.3, worse than its non-EMA counterpart at 6.3). The alignment loss regularizes the embedding space at the cost of slightly loosening within-context tightness.
+- `pos_ablated_split_ctx_ema_v2` (λ_alignment=0.1): Partially recovers F1 to 0.674 and random-half to 6.1, while retaining strong competition-split performance (67.5). However, this variant is archived (not in `PIPELINE_REGISTRY`) since the acts-in dropout family superseded it.
+
+EMA alignment provides the most value for pseudo-GT pair retrieval (the metric it most directly optimizes for: stable, pair-consistent embeddings). Its weakness is reduced supervised prediction quality, because the alignment loss trades some task-specific gradient signal for embedding stability.
+
+### Component 6: Acts-In Edge Dropout
+
+**Config**: `TrainingConfig.acts_in_dropout` (default 0.0). CLI: `--acts_in_dropout`.
+
+**What it does**: With probability `p` (default 0.3 when enabled), the `(player, acts_in, event)` edges are entirely dropped from the GNN message-passing graph during a training forward pass. The reverse edge `(event, performed_by, player)` and all context edges are retained. This is a stochastic regularizer applied per-batch during training only; inference always uses the full graph.
+
+Implementation in `PlayerSimilarityModel.forward()`:
+```python
+drop_acts_in = (
+    self.training
+    and self.acts_in_dropout > 0
+    and random.random() < self.acts_in_dropout
+)
+edge_index_dict = {
+    et: data[et].edge_index
+    for et in data.edge_types
+    if not (drop_acts_in and et == ("player", "acts_in", "event"))
+}
+```
+
+**Why it exists**: The `acts_in` edges carry actor identity into the event representation — they tell the GNN *who* performed each action. When these edges are always present, `h_event` can encode player-specific information, reducing FiLM's need to use `z_p` for personalization. By stochastically removing actor identity from the graph, the model must learn to predict actions in two regimes: (1) with full actor context (70% of batches), where actor-specific h_event patterns help, and (2) without actor identity (30% of batches), where FiLM and `z_p` are the *only* pathway for player-dependent prediction. This forces `z_p` to carry more behavioral information and makes the embedding space more discriminative for substitute retrieval.
+
+The mechanism is related to dropout in spirit but operates on the graph topology rather than on node features or weights. It is a form of structural noise injection that prevents the model from over-relying on actor-event message passing.
+
+**Effect on results**: `acts_in_dropout` (p=0.3, with split-context + position ablation + t=4.0/λ=1.0) achieves the best competition-split hit@10 (0.351), second-best absolute top-k JS (0.001031), and strong behavioral ordering (rho 0.928). It sits between the base `pos_ablated_split_ctx` and the EMA variant on most metrics, with the advantage of simpler training (no memory bank, no extra hyperparameters beyond the dropout probability). The stochastic masking slightly loosens within-context tightness (random-half mean rank 8.7 vs 6.3 for non-EMA base) but improves cross-context robustness and external validation (FIFA main-6 diff 7.9, second-best among GNN models).
+
+### Component 7: Position-Group Prediction Loss (λ_pos)
+
+**Config**: `TrainingConfig.lambda_pos` (default 0.0). CLI: `--lambda_pos`.
+
+**What it does**: Adds a cross-entropy loss that predicts each player's coarse position group (Goalkeeper / Defender / Midfielder / Forward / Unknown) from their pooled `z_p`:
+
+```
+L_pos = CrossEntropy(pos_head(z_p), position_group_label)
+```
+
+A small linear head (`nn.Linear(d, NUM_POSITION_GROUPS)`) on top of pooled `z_p` provides the logits. The loss weight `λ_pos` controls how much this auxiliary objective contributes to the total loss.
+
+**Why it exists**: Position ablation (Component 2) removes position from the input features, which is necessary for behavioral (not positional) embeddings. However, a practical substitute must typically play the same broad position. Without any positional signal, the model may produce embeddings where a goalkeeper and a forward are close because they both rarely touch the ball in midfield. The position-prediction loss provides a mild regularizer that preserves coarse positional structure in `z_p` without reintroducing the explicit positional shortcuts that ablation removed.
+
+The key distinction from the original position embedding is that position enters as a *soft prediction target* (the model must learn to infer position from behavior) rather than a *hard input feature* (the model is told the position directly). This encourages position-aware representations without permitting the "Left Wings cross" shortcut.
+
+**Effect on results**: `acts_in_dropout_pos` (λ_pos=0.3) was tested but has no `evaluations/` folder yet, so direct metrics are unavailable. The component's contribution is observed through `acts_in_dropout_pos_gu`, which combines it with group-weighted uniformity (Component 8).
+
+### Component 8: Group-Weighted Uniformity
+
+**Config**: `TrainingConfig.uniformity_group_weight` (default 1.0). CLI: `--uniformity_group_weight`.
+
+**What it does**: Modifies the Gaussian-potential uniformity loss so that same-position-group player pairs receive extra repulsive weight:
+
+```python
+if position_groups is not None and self.group_weight != 1.0:
+    same_group = pos_groups.unsqueeze(0) == pos_groups.unsqueeze(1)
+    weights = torch.where(same_group, self.group_weight, 1.0)
+    loss = log((exp_vals * weights).sum() / weights.sum())
+```
+
+With `uniformity_group_weight=3.0`, same-group pairs (e.g., midfielder vs midfielder) receive 3× the repulsive force of cross-group pairs (e.g., midfielder vs goalkeeper). Cross-group separation is already strong because different position groups exhibit very different action distributions; within-group separation requires more gradient pressure because players in the same role share many behavioral patterns.
+
+**Why it exists**: Standard uniformity loss distributes its finite gradient budget uniformly across all player pairs. But cross-group pairs (GK vs. FWD) are already well-separated by behavioral differences, so they consume gradient signal that would be more useful for separating similar players within the same role. Group-weighted uniformity reallocates the repulsive budget toward within-group pairs, sharpening the embedding space precisely where scouting queries operate — "find me another right-back like Trent Alexander-Arnold" requires distinguishing among right-backs, not between right-backs and goalkeepers.
+
+**Effect on results**: `acts_in_dropout_pos_gu` (group_weight=3.0, with acts-in dropout + λ_pos + split-context + position ablation) is the top-ranked model in the weighted evaluation (score 0.879). Its within-position discrimination produces neighbors that are not only behaviorally similar but also externally validated:
+- **Best FIFA main-6 diff** (7.7) among all GNN models — retrieved neighbors have the closest FIFA skill profiles
+- **Best qualitative head-coach score** (3.5/5) — produces Rúben Dias for Van Dijk and Bruno Fernandes for De Bruyne, picks no other model surfaces
+- **Strong behavioral fidelity** (rho 0.922, top-k JS 0.001051) without compression artifacts
+
+The trade-off is a slightly higher competition-split mean rank (74.0, vs 67.3 for `pos_ablated_split_ctx`) — the group-uniformity term trades some cross-context stability for sharper within-position boundaries. This is the expected cost: concentrating repulsive force within groups loosens the constraints between groups, allowing some cross-context drift for players whose competition context differs substantially.
+
+### Pipeline Registry
+
+All 11 named pipeline variants in `PIPELINE_REGISTRY`, listed in registry order. Each row shows which components are active and the key hyperparameter overrides from the defaults.
+
+| # | Pipeline Tag | Split Ctx | Pos Ablated | Player Samp | t | λ_pooled | EMA | λ_align | Acts-In Drop | λ_pos | Group Wt |
+|---|---|:-:|:-:|:-:|--:|--:|:-:|--:|--:|--:|--:|
+| 1 | `baseline` | — | — | — | 2.0 | 0.3 | — | — | — | — | 1.0 |
+| 2 | `player_samp` | — | — | Yes | 2.0 | 0.5 | — | — | — | — | 1.0 |
+| 3 | `split_ctx` | Yes | — | — | 2.0 | 0.3 | — | — | — | — | 1.0 |
+| 4 | `split_ctx_ps` | Yes | — | Yes | 2.0 | 0.5 | — | — | — | — | 1.0 |
+| 5 | `pos_ablated` | — | Yes | — | 2.0 | 0.3 | — | — | — | — | 1.0 |
+| 6 | `pos_ablated_split_ctx` | Yes | Yes | — | 4.0 | 1.0 | — | — | — | — | 1.0 |
+| 7 | `pos_ablated_split_ctx_v2` | Yes | Yes | — | 4.0 | 0.7 | — | — | — | — | 1.0 |
+| 8 | `pos_ablated_split_ctx_ema` | Yes | Yes | — | 4.0 | 1.0 | Yes | 0.3 | — | — | 1.0 |
+| 9 | `acts_in_dropout` | Yes | Yes | — | 4.0 | 1.0 | — | — | 0.3 | — | 1.0 |
+| 10 | `acts_in_dropout_pos` | Yes | Yes | — | 4.0 | 1.0 | — | — | 0.3 | 0.3 | 1.0 |
+| 11 | `acts_in_dropout_pos_gu` | Yes | Yes | — | 4.0 | 1.0 | — | — | 0.3 | 0.3 | 3.0 |
+
+Additionally, `pos_ablated_split_ctx_ema_v2` (λ_alignment=0.1) exists under `evaluations/` but is **not** in `PIPELINE_REGISTRY` — it is an archived run kept for comparison.
+
+Pipeline 10 (`acts_in_dropout_pos`) is registered but has **no evaluation run** yet.
+
+### Pipeline Progression: Design Rationale
+
+The 11 pipelines represent a progressive exploration. Each stage was motivated by a specific limitation of the previous best model:
+
+**Stage 1 — Baselines (pipelines 1–4):**
+
+`baseline` establishes the minimal system: heterogeneous GNN with unified context edges, position in input features, random batching, default uniformity (t=2.0, λ=0.3). `player_samp` tests whether guaranteeing contrastive positive pairs via structured batching improves embeddings. `split_ctx` tests whether separating teammate/opponent context helps. `split_ctx_ps` combines both.
+
+**Observation**: `split_ctx` achieves the best pseudo-GT retrieval (mean rank 56.1) but the worst behavioral fidelity (rho 0.710). Player-sampling models excel at self-consistency but fail at cross-player similarity. The baseline is surprisingly competitive with more complex models. The core issue: position information dominates `z_p`, producing positional-peer retrieval rather than behavioral-match retrieval.
+
+**Stage 2 — Position ablation (pipelines 5–8):**
+
+`pos_ablated` removes position from input features, forcing behavioral representations. `pos_ablated_split_ctx` combines this with split-context and elevated uniformity (t=4.0, λ=1.0) to prevent collapse. `pos_ablated_split_ctx_v2` tests whether λ=0.7 suffices — it does not (catastrophic collapse). `pos_ablated_split_ctx_ema` adds EMA alignment for cross-batch stability.
+
+**Observation**: The `pos_ablated_split_ctx` family dominates competition-split self-consistency (mean rank 67.3–67.7) and behavioral fidelity (rho 0.929–0.944). The collapsed v2 variant confirms the hard dependency on uniformity weight. EMA alignment further improves pseudo-GT retrieval (hit@50 0.700) but at the cost of supervised F1 (0.650). The remaining gap: within-position discrimination is moderate — the model treats all center-backs somewhat similarly.
+
+**Stage 3 — Acts-in dropout + position/group regularization (pipelines 9–11):**
+
+`acts_in_dropout` introduces stochastic actor-identity removal to force `z_p` to carry more behavioral signal. `acts_in_dropout_pos` adds a soft position-prediction loss to maintain coarse positional structure. `acts_in_dropout_pos_gu` adds group-weighted uniformity to sharpen within-position discrimination.
+
+**Observation**: `acts_in_dropout_pos_gu` is the top-ranked model (weighted score 0.879), winning the external validation categories (FIFA, qualitative) while maintaining strong behavioral metrics. The group-uniformity term produces discriminative within-position embeddings that yield practically useful substitutes — not just behaviorally similar players, but players a head coach would actually consider (Rúben Dias for VVD, Bruno Fernandes for KDB).
+
+### Component Interaction Summary
+
+| Component pair | Interaction |
+|---|---|
+| Split-context + Position ablation | Synergistic. Split-context provides the structural distinction (tm/opp) that the model needs when position labels are removed. Without split-context, position ablation must infer teammate/opponent from a single scalar. |
+| Position ablation + High uniformity | Required. Position ablation weakens the per-player gradient signal (no role shortcuts), so stronger uniformity (t=4.0, λ=1.0) is needed to maintain embedding spread. Reducing to λ=0.7 causes collapse. |
+| Acts-in dropout + FiLM | Complementary. Stochastically removing actor identity forces FiLM (and therefore `z_p`) to carry the full behavioral prediction burden. Without FiLM's multiplicative dependence, dropout of acts-in edges would simply degrade predictions. |
+| Group-uniformity + Position ablation | Complementary. Position ablation removes role shortcuts; group-weighted uniformity re-introduces *soft* position awareness by focusing repulsive force within position groups. The net effect is embeddings that are position-aware (center-backs cluster away from forwards) but differentiated within position (this center-back plays differently from that one). |
+| Player sampling + Uniformity | Partially redundant. Player sampling increases within-player cohesion but the resulting tight clusters are already well-separated by the uniformity loss. The combination produces the highest random-k JS in the substitute-quality diagnostic (`player_samp` / `split_ctx_ps` ≈ 0.01337–0.01344 vs ~0.008–0.009 for strong split-ctx models), inflating the substitute *ratio* via the denominator rather than improving absolute top-k neighbor quality. |
+| EMA alignment + Acts-in dropout | Alternative approaches. Both improve embedding stability, but EMA alignment does so via explicit regularization (memory bank) while acts-in dropout does so via implicit regularization (noise injection). The acts-in dropout family achieves comparable or better results with simpler training infrastructure. |
+
+### Heuristic Baselines
+
+Three non-learned baselines are evaluated under the same framework for calibration:
+
+| Tag | Method | Description |
+|---|---|---|
+| `h_mean_features` | Mean Features | Per-player average of all 126-D raw StatsBomb event features. Tests whether simple feature statistics suffice. |
+| `h_action_profile` | Action Profile | Per-player histogram of the 14 action types, normalized to a probability distribution. Tests whether action-type frequency alone captures player style. |
+| `h_fifa_attributes` | FIFA Attributes | Raw FIFA video-game attribute vectors (pace, shooting, passing, dribbling, defending, physic + sub-attributes). Tests an external human-curated skill profile. |
+
+Heuristic embeddings use the full player corpus (1,965 players for mean-features/action-profile; 1,450 for FIFA attributes, limited by FIFA data coverage) rather than the GNN's 1,633 (50-possession minimum). No self-consistency or policy diagnostics are computed for heuristics since they have no learned model to probe.
+
+`h_mean_features` is surprisingly competitive on pseudo-GT (mean rank 108.7, hit@50 0.633) — simple feature averages capture some behavioral patterns. `h_action_profile` performs worst (mean rank 287.2), confirming that action-type frequency alone is insufficient. `h_fifa_attributes` provides a calibration ceiling for external validation (FIFA main-6 diff 5.0, position match 75%) since it uses the FIFA data directly.
 
 ---
 
@@ -426,13 +689,13 @@ Given a query player_id:
 
 ### 6C: Pseudo Ground-Truth Evaluation
 
-Evaluates the embedding space against externally sourced player-similarity pairs drawn from public StatsBomb analysis articles. Each pair has a tier reflecting confidence:
+Evaluates the embedding space against **15 LLM-compiled** player-similarity pairs (5 tier-1, 7 tier-2, 3 tier-3) with citations to public analytics/media sources (see `docs/pseudo_ground_truth.md` and `GROUND_TRUTH_PAIRS` in `src/phase6_inference/ground_truth.py`). These are **directional sanity checks, not expert-validated ground truth**. Each pair has a tier reflecting how strong the directional expectation is:
 
-| Tier | Description | Example |
+| Tier | Description | Example (from `ground_truth.py`) |
 |---|---|---|
-| 1 | Strong directional expectation | Miedema ↔ Caldentey (93% similarity per StatsBomb) |
-| 2 | Good directional expectation | Kroos ↔ Enzo Fernandez (raw top-5 per StatsBomb) |
-| 3 | Weak / conditional expectation | Kane ↔ Leao (conditional on altered weighting) |
+| 1 | Strong directional expectation | Modrić ↔ Kroos; Van Dijk ↔ Dias; Bonmatí ↔ Putellas |
+| 2 | Good directional expectation | Kroos ↔ Enzo Fernández (StatsBomb raw top-5); Kane ↔ Lewandowski |
+| 3 | Weaker / conditional expectation | Musiala ↔ Foden (noted stylistic differences); Neuer ↔ Donnarumma |
 
 For each pair (A, B):
 
@@ -471,27 +734,33 @@ Three diagnostics testing whether cosine similarity corresponds to actual behavi
 
 Validates the GNN similarity system against external FIFA/EA Sports FC player attributes. Requires pre-matched FIFA CSVs in `FIFA_data/` (generated by `match_fifa_players.py`).
 
-1. Sample 10 male + 10 female players (stratified by position group, random each run).
+1. Sample 10 male + 10 female players (stratified by position group, random each run), plus famous players when available.
 2. For each sampled player, find the top-1 same-gender substitute via GNN cosine similarity (must also have FIFA data).
-3. Compare main stats (Pace, Shooting, Passing, Dribbling, Defending, Physical) and 34 detailed sub-attributes.
-4. Compute Spearman correlation between cosine similarity and mean stat difference.
-5. Generate 4 visualizations: radar chart grid, similarity-vs-stat-diff scatter, per-stat breakdown, evaluation summary dashboard.
+3. Compare main stats and detailed sub-attributes (radar charts are GK-aware).
+4. Correlation / agreement summaries (e.g. similarity vs mean stat distance).
+5. Multiple PNGs: radar grid, similarity vs stat distance, breakdowns, summary-style figures (e.g. dumbbell / heatmap), category views, sub-attribute detail heatmaps.
 
-**Output**: `test_fifa_comparison.txt` (text report), `radar_comparison.png`, `similarity_vs_stat_diff.png`, `stat_difference_breakdown.png`, `evaluation_summary.png`.
+**Output** (e.g. under `evaluations/{tag}/fifa_comparison/`): text report plus the PNGs above (exact filenames may evolve; see `test_fifa_comparison.py`).
 
 ### Unified Evaluation Pipeline (`--mode full_eval`, `--mode full_eval_all`)
 
-A `PIPELINE_REGISTRY` in `main.py` defines all four pipeline variants (baseline, `player_samp`, `split_ctx`, `split_ctx_ps`). The `full_eval` mode runs the complete evaluation suite for the current pipeline:
+A `PIPELINE_REGISTRY` in `main.py` defines all named GNN pipeline variants. The current registry contains **11 pipelines**: `baseline`, `player_samp`, `split_ctx`, `split_ctx_ps`, `pos_ablated`, `pos_ablated_split_ctx`, `pos_ablated_split_ctx_v2`, `pos_ablated_split_ctx_ema`, `acts_in_dropout`, `acts_in_dropout_pos`, and `acts_in_dropout_pos_gu`. Each entry specifies all architectural and training flags (split-context edges, player sampling, position ablation, uniformity parameters, EMA alignment, acts-in dropout, optional position/group-uniformity terms). The `full_eval` mode runs the complete evaluation suite for the current pipeline (**11 steps**):
 
 1. Inference (generate embeddings)
 2. Test-set evaluation (accuracy, F1, confusion matrices)
 3. Ground-truth pair evaluation
-4. Self-consistency evaluation
-5. Policy diagnostic
-6. Phase 7 analysis
-7. FIFA stat comparison
+4. Position-group retrieval precision (`embedding_eval.py`)
+5. Split-half embedding stability (skipped for GNN; used for event-feature heuristics in `eval_heuristics`)
+6. Qualitative nearest-neighbour table
+7. Self-consistency evaluation
+8. Policy diagnostic
+9. Empirical behavioral fidelity (`empirical_behavioral.py` — observed-action agreement vs random peers)
+10. Phase 7 analysis (`analyze`)
+11. FIFA stat comparison
 
-`full_eval_all` iterates through all registered pipelines. All outputs are saved to `evaluations/{pipeline_name}/{step_name}/` for organized comparison. The output directory is configurable via `--eval_output_dir` (default `./evaluations`).
+`full_eval_all` iterates through all registered pipelines. **`generate_heuristics`**, **`eval_heuristics`**, and **`full_eval_all_with_heuristics`** add or evaluate **mean-features**, **action-profile**, and **FIFA-attributes** heuristics under the same `evaluations/{pipeline_name}/…` layout. Configurable root: `--eval_output_dir` (default `./evaluations`).
+
+**Name → ID:** `find_player.py` uses accent folding and optional fuzzy matching (`rapidfuzz`) to obtain `player_id` for `--mode search`.
 
 ---
 
@@ -511,7 +780,11 @@ This produces:
 
 - **Text reports**: Per-situation predicted action type, direction, and length distributions for all players
 - **Bar charts**: Grouped bar charts comparing action probabilities across players for each situation
-- **PCA plots**: 2D visualisation of the embedding space with highlighted neighbourhoods
+- **PCA and t-SNE plots**: 2D visualisation of the embedding space (global + per-query neighbourhoods); t-SNE is omitted when there are too few players for a stable perplexity
+
+### Possession animation (`--mode possession_animation`)
+
+Optional **MP4/GIF** export of a single possession (or chained segments): ball trail from event locations, freeze-frame player layout, and **counterfactual** predicted actions (two chosen players or dynamic top-1 cosine substitute vs on-ball actor). Uses `src/phase7_analysis/possession_animation.py`; requires `--pipeline` (checkpoint + embeddings), graphs, and model. Not part of `full_eval`. See `main.py` docstring for examples (`--list-possessions`, `--graph-index`, `--players`, `--dynamic-substitute`, `--output`).
 
 ---
 
@@ -590,6 +863,7 @@ All configuration is defined in `src/config.py` as nested dataclasses (`DataConf
 | `n_angle_bins` | 9 | Direction bins (8 sectors + no-angle) |
 | `n_length_bins` | 5 | Displacement magnitude bins |
 | `dropout` | 0.1 | GNN layer dropout |
+| `ablate_position` | False | Zero out position in PlayerProjection and FiLM |
 | `focal_gamma` | 2.0 | Focal loss focusing parameter |
 
 ### Training
@@ -604,6 +878,9 @@ All configuration is defined in `src/config.py` as nested dataclasses (`DataConf
 | `lambda_pooled_contrast` | 0.3 | Pooled uniformity loss weight (z_p) |
 | `contrastive_temperature` | 0.05 | InfoNCE temperature |
 | `uniformity_t` | 2.0 | Gaussian-potential uniformity sensitivity |
+| `ema_alignment` | False | Enable EMA cross-batch alignment loss |
+| `lambda_alignment` | 0.3 | EMA alignment loss weight |
+| `ema_momentum` | 0.999 | EMA memory bank decay rate |
 | `patience` | 15 | Early stopping patience |
 | `save_every_n_epochs` | 10 | Periodic checkpoint interval |
 
@@ -751,7 +1028,7 @@ The following issues were identified during a full code audit and corrected:
 
 **Note**: When `--split_context_edges` is used, this is an architectural change — existing checkpoints are incompatible and the full pipeline (Phase 3 → Phase 5) must be re-run with the flag. Graphs built with a different edge schema will be caught at load time by `validate_graph_config_match()`, which raises `ValueError` on mismatch.
 
-**Ablation workflow** (`--tag` + `--split_context_edges`): Use `python main.py --mode build_graphs --tag split_ctx --split_context_edges` (then `train`, `evaluate`, etc. with the same flags). The tag namespaces Phase 3+ outputs (`possession_graphs_{tag}.pkl`, `checkpoints/{tag}/`, `embeddings/{tag}/`) while sharing Phase 1–2 data. The baseline run (no tag, no flag) is never overwritten.
+**Ablation workflow** (`--tag` + `--split_context_edges`): Use `python main.py --mode build_graphs --tag split_ctx --split_context_edges` (then `train`, `evaluate`, etc. with the same flags). The tag namespaces **checkpoints and embeddings** (`checkpoints/{tag}/`, `embeddings/{tag}/`); graphs are saved as `possession_graphs_split_ctx.pkl` (topology key), shared across all pipelines that use split-context edges. Phase 1–2 data remain shared. The baseline run (no tag, no split-context flag) is never overwritten.
 
 ---
 
@@ -760,9 +1037,10 @@ The following issues were identified during a full code audit and corrected:
 ```
 GNN_StatsBomb/
 ├── main.py                          # CLI entry point for all phases
+├── find_player.py                   # CLI: name → player_id (accent + fuzzy)
 ├── match_fifa_players.py            # FIFA-StatsBomb player matcher
 ├── test_fifa_comparison.py          # FIFA stat comparison & visualizations
-├── requirements.txt                 # Python dependencies (torch, torch-geometric, etc.)
+├── requirements.txt                 # Python dependencies (torch, torch-geometric, rapidfuzz, etc.)
 ├── SYSTEM_DESIGN.md                 # This document
 ├── src/
 │   ├── config.py                    # All configuration, vocabularies, tag/graph validation
@@ -780,27 +1058,30 @@ GNN_StatsBomb/
 │   │   └── pooling.py               # Attention-weighted pooling
 │   ├── phase5_training/
 │   │   ├── trainer.py               # Training loop with early stopping + dual checkpoints
-│   │   ├── losses.py                # Focal, contrastive, uniformity, combined losses
+│   │   ├── losses.py                # Focal, contrastive, uniformity, EMA alignment, combined losses
 │   │   ├── dataset.py               # PyG dataset with masking + targets + match-level split
 │   │   ├── action_targets.py        # Discretise actions into bins
 │   │   ├── evaluator.py             # Test-set evaluation (metrics + plots)
 │   │   └── sampler.py               # PlayerAwareBatchSampler for contrastive batching
+│   ├── heuristics.py                # Mean-features / action-profile / FIFA-attribute embeddings
 │   ├── phase6_inference/
 │   │   ├── embedding_generator.py   # Batched z_p generation
 │   │   ├── similarity_search.py     # Cosine similarity top-k search
 │   │   ├── ground_truth.py          # Pseudo ground-truth pair evaluation
 │   │   ├── self_consistency.py      # Competition-split + random-half self-retrieval
 │   │   ├── policy_diagnostic.py     # JS correlation, substitute quality, FiLM sensitivity
+│   │   ├── embedding_eval.py        # Position retrieval, split-half, qualitative neighbours
 │   │   └── provenance.py            # Embedding manifest build/validate
 │   └── phase7_analysis/
 │       ├── report_builder.py        # Orchestrates full analysis
 │       ├── situation_comparison.py   # Counterfactual action prediction
-│       └── embedding_viz.py         # PCA visualisations
+│       └── embedding_viz.py         # PCA + t-SNE visualisations
 ├── docs/                            # Per-phase documentation
 │   ├── README.md                    # Docs index
 │   ├── PHASE1.md … PHASE7.md       # One file per phase
 │   ├── DATA_QUALITY.md              # Data quality notes
 │   ├── EVALUATION_RESULTS.md        # Baseline evaluation results and analysis
+│   ├── pseudo_ground_truth.md      # Curated pairs and rationale (no metric results)
 │   ├── FUTURE_IMPROVEMENTS.md       # SOTA assessment and improvement roadmap
 │   └── PLAYER_SIMILARITY_FINAL_PLAN.md  # Original design plan
 ├── processed_data/                  # Phase 1–3 outputs
@@ -810,29 +1091,31 @@ GNN_StatsBomb/
 │   ├── feature_names.json           # Human-readable feature dimension names
 │   ├── data_stats.json              # Dataset statistics
 │   ├── possessions.pkl              # Phase 2 output
-│   ├── possession_graphs.pkl        # Phase 3 output (baseline)
-│   └── possession_graphs_{tag}.pkl  # Phase 3 output (tagged experiment)
+│   ├── possession_graphs.pkl              # Phase 3: unified context edges
+│   └── possession_graphs_split_ctx.pkl    # Phase 3: split teammate/opponent context
 ├── checkpoints/                     # Trained model weights
 │   ├── baseline/                    # Baseline pipeline checkpoints
 │   │   ├── best_model.pt            # Best val_supervised checkpoint
 │   │   ├── best_total_model.pt      # Best val_total checkpoint
 │   │   ├── final_model.pt           # End-of-training checkpoint
-│   │   ├── training_history.json    # Per-epoch loss curves
-│   │   └── evaluation/              # Test-set metrics + plots
+│   │   └── training_history.json    # Per-epoch loss curves
 │   └── {tag}/                       # Tagged experiment checkpoints (same structure)
 ├── embeddings/                      # Embedding outputs
 │   ├── baseline/                    # Baseline pipeline embeddings
 │   │   ├── player_embeddings.npy    # (n_players, 64)
 │   │   ├── player_info.parquet      # Player metadata
 │   │   ├── embedding_manifest.json  # Provenance (checkpoint, graphs, config)
-│   │   └── analysis/                # Phase 7 reports, plots, PCA
+│   │   └── analysis/                # Phase 7 reports & plots (when analyze run standalone)
 │   └── {tag}/                       # Tagged experiment embeddings (same structure)
 └── evaluations/                     # Unified evaluation outputs (generated)
-    └── {pipeline_name}/             # Per-pipeline evaluation results
+    └── {pipeline_name}/             # Per-pipeline evaluation results (GNN tags + heuristics)
         ├── test_metrics/            # Accuracy, F1, confusion matrices
         ├── ground_truth/            # Ground-truth pair evaluation
+        ├── position_retrieval/      # Position-group retrieval precision
+        ├── split_half/              # Split-half stability (heuristics / skipped for GNN)
+        ├── qualitative_neighbors/   # Notable-player neighbour tables
         ├── self_consistency/        # Self-consistency evaluation
         ├── policy_diagnostic/       # Policy diagnostic results
-        ├── analysis/                # Phase 7 analysis
+        ├── analysis/                # Phase 7 analysis (when run via full_eval)
         └── fifa_comparison/         # FIFA stat comparison + visualizations
 ```

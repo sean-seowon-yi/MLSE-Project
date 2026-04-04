@@ -363,6 +363,8 @@ StatsBomb/
 
 **Note**: Not all matches have 360 data available. Check `match_available_360` in competitions.json. The **GNN_StatsBomb** pipeline uses 360 by default: only matches with a `three-sixty/{match_id}.json` file are loaded, and only events that have a 360 frame are kept, so that player similarity can use spatial context (teammates/opponents around the ball).
 
+**Corpus size (illustrative):** With the full open-data tree and default settings, Phase 1–2 typically land near **737k** on-ball events, **~52k** possessions, **323** matches, and **7** competition–season pairs — exact counts depend on the StatsBomb commit you cloned; see `GNN_StatsBomb/SYSTEM_DESIGN.md` (Dataset → Scale) and your local `processed_data/data_stats.json`.
+
 ### Coordinate System
 - **X-axis**: 0-120 (length of field)
 - **Y-axis**: 0-80 (width of field)
@@ -394,12 +396,11 @@ FIFA_data/
 ├── statsbomb_male_players_fifa.csv        # Matched: StatsBomb male players → FIFA stats
 ├── statsbomb_female_players_fifa.csv      # Matched: StatsBomb female players → FIFA stats
 ├── unmatched_players.txt                  # StatsBomb 360 players not found in FIFA data
-├── test_fifa_comparison.txt               # Text report from comparison test
-├── radar_comparison.png                   # Query vs substitute stat profile radar charts
-├── similarity_vs_stat_diff.png            # Cosine similarity vs FIFA stat difference scatter
-├── stat_difference_breakdown.png          # Per-attribute mean absolute difference bars
-└── evaluation_summary.png                 # Position match rate, rating gap, agreement boxplots
+├── test_fifa_comparison.txt               # Optional local copy of a text report
+└── (optional) *.png                       # Plots if you save FIFA comparison artifacts here
 ```
+
+The pipeline normally writes FIFA comparison reports and PNGs under **`GNN_StatsBomb/evaluations/{tag}/fifa_comparison/`** when you run `--mode fifa_comparison` or when `full_eval` reaches its final step (FIFA comparison is step 11 of 11).
 
 ### Matching Process
 

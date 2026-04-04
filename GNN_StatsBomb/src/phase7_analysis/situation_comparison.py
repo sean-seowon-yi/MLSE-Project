@@ -10,6 +10,7 @@ the *global* ``z_p`` of different players and run the action heads.
 This answers: "In **this** situation, what would player A do vs player B?"
 """
 
+import math
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -25,6 +26,11 @@ from ..phase3_graph.masking import mask_future_info
 from ..phase4_model import PlayerSimilarityModel
 
 _POS_NAME_TO_IDX: Dict[str, int] = {p: i for i, p in enumerate(POSITIONS)}
+_EVENT_TYPE_TO_IDX: Dict[str, int] = {e: i for i, e in enumerate(EVENT_TYPES)}
+
+_N_ANGLE_BINS_RAW = 8
+_NO_ANGLE_BIN = _N_ANGLE_BINS_RAW
+_LENGTH_THRESHOLDS = [0.05, 0.15, 0.30, 0.50]
 
 _ANGLE_BIN_LABELS = [
     "Forward", "Fwd-Right", "Right", "Back-Right",
@@ -91,6 +97,11 @@ class SituationComparator:
 
     def _describe_situation(self, global_idx: int, meta: pd.DataFrame) -> Dict:
         """Build a human-friendly dict describing an event's situation."""
+        if global_idx < 0 or global_idx >= len(self.event_features):
+            raise ValueError(
+                f"global_idx={global_idx} out of range for event_features "
+                f"(len={len(self.event_features)})."
+            )
         raw = self.event_features[global_idx]
         loc_x = float(raw[14]) * PITCH_LENGTH
         loc_y = float(raw[15]) * PITCH_WIDTH
@@ -116,15 +127,67 @@ class SituationComparator:
             "lane": lane,
             "under_pressure": under_pressure,
         }
-        if global_idx in meta.index:
-            row = meta.loc[global_idx]
+        # Meta rows are saved with index=False; row i aligns with global event index i.
+        if 0 <= global_idx < len(meta):
+            row = meta.iloc[global_idx]
             info["period"] = int(row.get("period", -1)) if "period" in row.index else -1
             info["minute"] = int(row.get("minute", -1)) if "minute" in row.index else -1
             info["second"] = int(row.get("second", -1)) if "second" in row.index else -1
             info["observed_action"] = row.get("event_type", "")
+
+        # Ground-truth bins (same logic as ActionTargetEncoder.encode)
+        etype = info.get("observed_action", "")
+        info["gt_action_type_idx"] = _EVENT_TYPE_TO_IDX.get(etype, 0)
+
+        dx = float(raw[19])
+        dy = float(raw[20])
+        dist = math.sqrt(dx * dx + dy * dy)
+        has_end = float(raw[18]) > 0.5
+
+        if has_end and (abs(dx) > 1e-6 or abs(dy) > 1e-6):
+            angle = math.atan2(dy, dx)
+            if angle < 0:
+                angle += 2 * math.pi
+            gt_ang = min(int(angle / (2 * math.pi) * _N_ANGLE_BINS_RAW),
+                         _N_ANGLE_BINS_RAW - 1)
+            gt_len = len(_LENGTH_THRESHOLDS)
+            for j, thresh in enumerate(_LENGTH_THRESHOLDS):
+                if dist <= thresh:
+                    gt_len = j
+                    break
+        else:
+            gt_ang = _NO_ANGLE_BIN
+            gt_len = 0
+
+        info["gt_angle_bin"] = gt_ang
+        info["gt_length_bin"] = gt_len
         return info
 
     # ── core comparison ──────────────────────────────────────────────
+
+    def _predict_for_player(
+        self,
+        h_ev: torch.Tensor,
+        pid: int,
+    ) -> Optional[Dict[str, np.ndarray]]:
+        """Softmax action / angle / length for one player trait ``z_p`` at state ``h_ev``."""
+        z_p_np = self._get_z(pid)
+        if z_p_np is None:
+            return None
+        z_p = torch.tensor(z_p_np, dtype=torch.float32, device=self.device)
+        pos_idx: Optional[torch.Tensor] = None
+        if not self.model.ablate_position:
+            pos_idx = torch.tensor(
+                [self._pid_to_pos_idx.get(pid, 0)],
+                dtype=torch.long, device=self.device,
+            )
+        h_cond = self.model.film_condition(
+            h_ev.unsqueeze(0), z_p.unsqueeze(0), pos_idx=pos_idx,
+        )
+        at = F.softmax(self.model.action_type_head(h_cond).squeeze(0), dim=-1).cpu().numpy()
+        ang = F.softmax(self.model.angle_bin_head(h_cond).squeeze(0), dim=-1).cpu().numpy()
+        ln = F.softmax(self.model.length_bin_head(h_cond).squeeze(0), dim=-1).cpu().numpy()
+        return {"action_type": at, "angle_bin": ang, "length_bin": ln}
 
     def compare(
         self,
@@ -165,25 +228,75 @@ class SituationComparator:
 
         with torch.no_grad():
             for pid in player_ids:
-                z_p_np = self._get_z(pid)
-                if z_p_np is None:
-                    continue
-                z_p = torch.tensor(z_p_np, dtype=torch.float32, device=self.device)
-                pos_idx = torch.tensor(
-                    [self._pid_to_pos_idx.get(pid, 0)],
-                    dtype=torch.long, device=self.device,
-                )
-                h_cond = self.model.film_condition(
-                    h_ev.unsqueeze(0), z_p.unsqueeze(0), pos_idx=pos_idx,
-                )  # (1, d)
-
-                at = F.softmax(self.model.action_type_head(h_cond).squeeze(0), dim=-1).cpu().numpy()
-                ang = F.softmax(self.model.angle_bin_head(h_cond).squeeze(0), dim=-1).cpu().numpy()
-                ln = F.softmax(self.model.length_bin_head(h_cond).squeeze(0), dim=-1).cpu().numpy()
-
-                predictions[pid] = {"action_type": at, "angle_bin": ang, "length_bin": ln}
+                pred = self._predict_for_player(h_ev, pid)
+                if pred is not None:
+                    predictions[pid] = pred
 
         return {"situation": situation, "predictions": predictions}
+
+    def compare_possession(
+        self,
+        graph_idx: int,
+        player_ids: List[int],
+        meta: pd.DataFrame,
+    ) -> Optional[Dict]:
+        """
+        Run counterfactual predictions for every on-ball event in one possession graph.
+
+        One GNN forward (acts-in dropped) per possession; then FiLM + heads per event
+        and player.
+
+        Returns
+        -------
+        dict with:
+          "graph_idx", "pos_key", "match_id", "events" (list of per-event dicts
+          with global_event_idx, local_event_idx, situation, predictions)
+        or None if *graph_idx* is out of range.
+        """
+        if graph_idx < 0 or graph_idx >= len(self.graphs):
+            return None
+
+        g = self.graphs[graph_idx]
+        g_masked = g.clone()
+        masked_x = mask_future_info(g_masked["event"].x.numpy())
+        g_masked["event"].x = torch.tensor(masked_x, dtype=torch.float32)
+        g_dev = g_masked.to(self.device)
+
+        with torch.no_grad():
+            out_dict = self.model.encode_possession_counterfactual(g_dev)
+            h_event = out_dict["event"]
+
+        T = int(h_event.shape[0])
+        n_map = int(g.event_indices_global.shape[0])
+        if T != n_map:
+            raise ValueError(
+                f"GNN event count ({T}) != graph.event_indices_global length ({n_map}) "
+                f"for graph_idx={graph_idx}."
+            )
+        events: List[Dict] = []
+        for local_ev_idx in range(T):
+            global_idx = int(g.event_indices_global[local_ev_idx].item())
+            h_ev = h_event[local_ev_idx]
+            situation = self._describe_situation(global_idx, meta)
+            predictions: Dict[int, Dict[str, np.ndarray]] = {}
+            with torch.no_grad():
+                for pid in player_ids:
+                    pred = self._predict_for_player(h_ev, pid)
+                    if pred is not None:
+                        predictions[pid] = pred
+            events.append({
+                "global_event_idx": global_idx,
+                "local_event_idx": local_ev_idx,
+                "situation": situation,
+                "predictions": predictions,
+            })
+
+        return {
+            "graph_idx": graph_idx,
+            "pos_key": getattr(g, "pos_key", None),
+            "match_id": getattr(g, "match_id", None),
+            "events": events,
+        }
 
     # ── text formatting ──────────────────────────────────────────────
 

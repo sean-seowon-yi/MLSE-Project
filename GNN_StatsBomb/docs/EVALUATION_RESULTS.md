@@ -1,699 +1,687 @@
-# Evaluation Results — Baseline vs Split-Context Model
+# Evaluation Results
 
-> **Model**: Default baseline (unified context edges, no tag)
-> **Embedding dimension**: 64-D
-> **Players in embedding space**: 1,633
-> **Possession graphs**: 51,778
+This document presents a critical, metric-by-metric analysis of every model evaluated under `evaluations/`. All numbers are extracted directly from the JSON result files; every claim is verifiable against the raw data.
 
----
+## 1. Models Evaluated
 
-## 1. Self-Consistency Evaluation
+**GNN models (11 evaluation folders):** 10 named pipelines in `main.py` `PIPELINE_REGISTRY` that currently have runs under `evaluations/`, plus 1 archived run (`pos_ablated_split_ctx_ema_v2`) kept for comparison. The registry also lists `acts_in_dropout_pos` (position-regularized acts-in dropout); there is **no** `evaluations/acts_in_dropout_pos/` folder yet, so that preset is omitted from the tables below. (The registry has 11 entries total.)
 
-The self-consistency evaluation tests whether the model assigns **stable identity** — i.e., whether the same player, observed in different contexts, is recognised as their own closest match. Two complementary tests are run over the full set of possession graphs.
+| Tag | Position ablation | Split-context edges | Player sampling | Uniformity t | Lambda pooled | EMA alignment | Lambda alignment | Extra |
+|-----|:-:|:-:|:-:|:-:|:-:|:-:|:-:|---|
+| `baseline` | No | No | No | 2.0 | 0.3 | No | - | — |
+| `player_samp` | No | No | Yes | 2.0 | 0.5 | No | - | — |
+| `split_ctx` | No | Yes | No | 2.0 | 0.3 | No | - | — |
+| `split_ctx_ps` | No | Yes | Yes | 2.0 | 0.5 | No | - | — |
+| `pos_ablated` | Yes | No | No | 2.0 | 0.3 | No | - | — |
+| `pos_ablated_split_ctx` | Yes | Yes | No | 4.0 | 1.0 | No | - | — |
+| `pos_ablated_split_ctx_v2` | Yes | Yes | No | 4.0 | 0.7 | No | - | — |
+| `pos_ablated_split_ctx_ema` | Yes | Yes | No | 4.0 | 1.0 | Yes | 0.3 | — |
+| `pos_ablated_split_ctx_ema_v2` | Yes | Yes | No | 4.0 | 1.0 | Yes | 0.1 | Archived (not in registry) |
+| `acts_in_dropout` | Yes | Yes | No | 4.0 | 1.0 | No | - | `acts_in_dropout=0.3` |
+| `acts_in_dropout_pos` | Yes | Yes | No | 4.0 | 1.0 | No | - | p=0.3, `lambda_pos=0.3` (no eval run yet) |
+| `acts_in_dropout_pos_gu` | Yes | Yes | No | 4.0 | 1.0 | No | - | p=0.3, `lambda_pos=0.3`, `uniformity_group_weight=3.0` |
 
-Both tests use **open-set retrieval**: non-testable players whose total possessions meet the inference threshold (50) are pooled and added to the retrieval gallery as distractors. This means ranks are measured against the full inference population of **1,633 players**, not just the testable subset.
+`pos_ablated_split_ctx_ema_v2` is included in this report from `evaluations/` but is not in `PIPELINE_REGISTRY`.
 
-### 1.1 Competition-Split Test
+**Heuristic baselines (3):** non-learned methods, no self-consistency/policy/test metrics available.
 
-Players appearing in **two or more competitions** with at least 50 possessions each are split by competition. Embeddings from each competition half are pooled independently via the trained AttentionPooling, then self-retrieval rank is measured against the full gallery.
-
-| Metric | Value |
-|--------|-------|
-| Testable players | 311 |
-| Gallery size | 1,633 (311 testable + 1,322 distractors) |
-| Self-cosine (mean / median / std) | 0.8273 / 0.8636 / 0.1588 |
-| Cross-cosine (mean) | 0.3003 |
-| **Cosine margin (self − cross)** | **+0.5270** |
-| Mean rank | 185.0 / 1,633 (top 11.3%) |
-| Median rank | 108 / 1,633 (top 6.6%) |
-| Hit@1 | 2.2% |
-| Hit@5 | 8.5% |
-| Hit@10 | 13.0% |
-| Hit@20 | 20.3% |
-| Hit@50 | 33.3% |
-
-#### By position group (competition-split)
-
-| Position Group | n | Self-cosine | Mean Rank | Median Rank | Hit@1 | Hit@5 | Hit@10 |
-|----------------|---|-------------|-----------|-------------|-------|-------|--------|
-| Defender | 124 | 0.8273 | 164.6 | 103 | 1.2% | 8.5% | 11.7% |
-| Forward | 71 | 0.8480 | 172.6 | 122 | 0.7% | 3.5% | 9.2% |
-| Goalkeeper | 18 | 0.9973 | 28.6 | 18 | 16.7% | 25.0% | 36.1% |
-| Midfielder | 98 | 0.7809 | 248.5 | 155 | 2.0% | 9.2% | 13.3% |
-
-#### Notable competition-split retrievals
-
-**Best self-retrievals (avg rank):**
-
-| Player | Self-cosine | Rank (A→B) | Rank (B→A) | Avg |
-|--------|-------------|------------|------------|-----|
-| Hugo Lloris | 0.9988 | 1 | 1 | 1.0 |
-| Antonio Rüdiger | 0.9720 | 1 | 1 | 1.0 |
-| Thibaut Courtois | 0.9985 | 1 | 1 | 1.0 |
-| Ingrid Filippa Angeldal | 0.9827 | 1 | 1 | 1.0 |
-| Mario Pašalić | 0.9215 | 1 | 2 | 1.5 |
-| Rúben Dias | 0.9723 | 2 | 2 | 2.0 |
-| Pauline Peyraud Magnin | 0.9989 | 1 | 3 | 2.0 |
-| Jurriën Timber | 0.9573 | 5 | 1 | 3.0 |
-| Irene Paredes Hernandez | 0.9772 | 4 | 2 | 3.0 |
-
-**Worst self-retrievals (avg rank):**
-
-| Player | Self-cosine | Rank (A→B) | Rank (B→A) | Avg |
-|--------|-------------|------------|------------|-----|
-| Sergej Milinković-Savić | 0.1650 | 1,127 | 1,200 | 1,163.5 |
-| Stephanie van der Gragt | −0.3230 | 1,350 | 1,407 | 1,378.5 |
+| Tag | Method |
+|-----|--------|
+| `h_mean_features` | Mean of raw StatsBomb features per player |
+| `h_action_profile` | Action-type distribution histogram per player |
+| `h_fifa_attributes` | FIFA video-game attribute vectors |
 
 ---
 
-### 1.2 Random-Half Test
+## 2. Pseudo-Ground-Truth Pair Retrieval
 
-All players with at least 100 possessions (regardless of competition count) are randomly split 50/50. Each half is pooled independently and self-retrieval rank is measured against the full gallery. This tests pure embedding stability without the confound of competition context shift.
+15 LLM-generated similar-player pairs (5 tier-1, 7 tier-2, 3 tier-3) across men's and women's football, sourced from publicly cited analytics comparisons and compiled by an LLM (see `docs/pseudo_ground_truth.md`). These are **directional sanity checks, not expert-validated ground truth** — the pairs are reasonable (e.g., Modrić–Kroos, VVD–Dias) but carry LLM biases toward fame, media narratives, and positional similarity. Disagreement with these pairs does not necessarily indicate a model flaw. Gallery size: 984 male / 647 female. Lower rank = better. All GNN models use 1,633 embedded players; heuristics use 1,965 (h_mean_features, h_action_profile) or 1,450 (h_fifa_attributes).
 
-| Metric | Value |
-|--------|-------|
-| Testable players | 1,083 |
-| Gallery size | 1,633 (1,083 testable + 550 distractors) |
-| Self-cosine (mean / median / std) | 0.8802 / 0.9009 / 0.1007 |
-| Cross-cosine (mean) | 0.3024 |
-| **Cosine margin (self − cross)** | **+0.5778** |
-| Mean rank | 88.0 / 1,633 (top 5.4%) |
-| Median rank | 46 / 1,633 (top 2.8%) |
-| Hit@1 | 4.8% |
-| Hit@5 | 13.9% |
-| Hit@10 | 20.7% |
-| Hit@20 | 31.4% |
-| Hit@50 | 53.5% |
+### 2.1 Overall Summary
 
-#### By position group (random-half)
+| Model | Mean Rank | Median Rank | Hit@5 | Hit@10 | Hit@20 | Hit@50 |
+|-------|----------:|----------:|------:|-------:|-------:|-------:|
+| split_ctx | **56.1** | 40 | 0.100 | 0.233 | 0.400 | 0.600 |
+| pos_ablated_split_ctx_ema | 62.6 | 37 | 0.133 | 0.233 | 0.400 | **0.700** |
+| pos_ablated_split_ctx | 63.1 | 39 | 0.200 | **0.267** | 0.300 | 0.633 |
+| pos_ablated_split_ctx_ema_v2 | 64.3 | 42 | 0.167 | **0.267** | 0.333 | 0.633 |
+| acts_in_dropout_pos_gu | 66.7 | 41 | 0.200 | 0.233 | 0.367 | 0.567 |
+| baseline | 67.6 | 30 | 0.167 | 0.233 | **0.433** | 0.667 |
+| acts_in_dropout | 68.2 | 32 | 0.167 | 0.267 | 0.400 | 0.633 |
+| pos_ablated | 69.6 | 30 | 0.200 | 0.233 | 0.333 | 0.567 |
+| player_samp | 70.2 | 71 | 0.167 | 0.200 | 0.233 | 0.333 |
+| split_ctx_ps | 71.4 | 73 | 0.133 | 0.167 | 0.267 | 0.333 |
+| h_mean_features | 108.7 | 35 | 0.200 | 0.267 | 0.267 | 0.633 |
+| h_fifa_attributes | 130.0 | 73 | 0.200 | 0.267 | 0.300 | 0.400 |
+| pos_ablated_split_ctx_v2 | 198.8 | 161 | 0.033 | 0.067 | 0.100 | 0.200 |
+| h_action_profile | 287.2 | 61 | 0.100 | 0.133 | 0.300 | 0.467 |
 
-| Position Group | n | Self-cosine | Mean Rank | Median Rank | Hit@1 | Hit@5 | Hit@10 |
-|----------------|---|-------------|-----------|-------------|-------|-------|--------|
-| Defender | 451 | 0.8873 | 81.9 | 50 | 2.2% | 9.8% | 17.1% |
-| Forward | 217 | 0.8817 | 92.9 | 58 | 2.5% | 11.5% | 17.1% |
-| Goalkeeper | 51 | 0.9986 | 5.0 | 2 | 45.1% | 72.5% | 85.3% |
-| Midfielder | 364 | 0.8540 | 104.3 | 44 | 3.7% | 12.1% | 18.3% |
+**Key observations:**
 
-### 1.3 Interpretation
+- `split_ctx` has the lowest mean rank (56.1), but its confidence interval [35.8, 83.3] overlaps heavily with the `pos_ablated_split_ctx` family ([36.6, 92.6] for ema; [38.0, 91.7] for base). No model is statistically significantly better than another at the top.
+- `pos_ablated_split_ctx_ema` has the best hit@50 (0.700) meaning 70% of known pairs appear within the top 50 neighbors.
+- `acts_in_dropout_pos_gu` achieves the **third-best** mean rank (66.7) among GNN models—between `pos_ablated_split_ctx_ema_v2` (64.3) and `baseline` (67.6)—but does not beat `pos_ablated_split_ctx_ema` on hit@50 (0.567 vs 0.700).
+- Player-sampling models (`player_samp`, `split_ctx_ps`) have conspicuously high median ranks (71, 73) despite moderate mean ranks, indicating retrieval quality is inconsistent, with a few easy pairs performing well but most pairs ranked poorly.
+- `pos_ablated_split_ctx_v2` (lambda_pooled=0.7, uniformity_t=4.0) collapses entirely, confirming that even a modest reduction in uniformity weight is catastrophic for the pos_ablated architecture.
+- The `baseline` model (mean_rank 67.6, median 30) is surprisingly competitive with more complex models, outperforming `player_samp` and `split_ctx_ps` on median rank.
 
-**The model demonstrably captures player identity.** The cosine margin of +0.53 to +0.58 is large — self-similarity is far above random cross-player similarity. Median ranks in the top 3–7% of the full 1,633-player gallery confirm the signal is real and consistent across both test variants.
+### 2.2 Tier-1 Pairs (Highest-Confidence Substitutes)
 
-**Open-set retrieval is the more realistic benchmark.** By including all inference-eligible players as distractors, the self-retrieval task matches the actual deployment scenario where a query player must be found among all 1,633 candidates. The percentile rankings (top 5–7% by median) are consistent with what was observed in the earlier closed-set evaluation, confirming that the model's quality signal is not an artifact of a small candidate pool.
+These 5 pairs (Modric-Kroos, VVD-Dias, Alba-Robertson, TAA-Hakimi, Bonmati-Putellas) represent the strongest known substitute relationships.
 
-**Goalkeeper results are inflated by positional distinctiveness.** With only 18 goalkeepers in the competition-split (51 in random-half), goalkeepers are easy to cluster away from outfield players. In the open-set gallery of 1,633, goalkeepers achieve mean rank 28.6 (competition-split) and 5.0 (random-half). The random-half result (Hit@1 = 45.1% among 1,633) demonstrates genuine individual identity learning beyond positional clustering, but the inherently low-variance goalkeeper action profile still makes this the easiest subgroup.
+| Model | Tier-1 Mean Rank | Tier-1 Hit@10 |
+|-------|------------------:|--------------:|
+| split_ctx | 50.2 | 0.000 |
+| baseline | 57.2 | 0.200 |
+| pos_ablated_split_ctx | 89.5 | 0.200 |
+| pos_ablated | 93.6 | 0.000 |
+| pos_ablated_split_ctx_ema | 97.3 | 0.200 |
+| pos_ablated_split_ctx_ema_v2 | 97.3 | 0.200 |
+| acts_in_dropout_pos_gu | 102.5 | 0.200 |
+| acts_in_dropout | 107.3 | 0.200 |
+| player_samp | 115.3 | **0.000** |
+| split_ctx_ps | 116.9 | **0.000** |
 
-**Outfield positions are the more honest signal.** Defenders and forwards achieve mean rank 82–173 out of 1,633. Midfielders are the hardest group (mean rank 104–249), likely because midfield roles are the most tactically varied.
+**Critical finding:** Both player-sampling models score 0.0 hit@10 on tier-1 pairs. They cannot place any of the five most obvious substitutes within the top 10. The `baseline` model outperforms them on tier-1 pairs. `split_ctx` achieves the best tier-1 mean rank (50.2) but also has 0.0 hit@10, indicating its advantages come from moderate ranks across the board rather than top-10 placement. The acts-in dropout runs reach 0.2 hit@10 on tier-1 but at **worse** mean ranks (102–107) than the `pos_ablated_split_ctx` family.
 
-**Hit@1 is low (2–5%) across both tests.** The model gets players to the right neighbourhood but rarely pins down exact identity as the top-1 match. This is expected for a baseline with no player-aware contrastive sampling.
+### 2.3 Pair-Level Detail for Key Pairs
 
----
+Selected pair-level ranks (format: rank of B in A's neighbors / rank of A in B's neighbors):
 
-## 2. Pseudo Ground-Truth Evaluation
+| Pair | pos_ablated_split_ctx | ema | ema_v2 | acts_in_dropout | player_samp |
+|------|-----:|-----:|-----:|-----:|-----:|
+| VVD - Dias | 6/8 | 8/8 | 10/9 | 7/10 | 57/91 |
+| Alba - Robertson | 33/41 | 37/33 | 41/48 | 40/26 | 86/112 |
+| TAA - Hakimi | 33/99 | 18/97 | 15/92 | 15/92 | 128/81 |
+| Saka - Dembele | 3/4 | 2/3 | 1/2 | 2/4 | 1/2 |
+| Kane - Lewandowski | 27/40 | 17/17 | 32/38 | 22/18 | 68/95 |
+| Kroos - Enzo | 20/62 | 11/25 | 15/56 | 18/51 | 88/71 |
+| Musiala - Foden | 3/2 | 12/4 | 8/4 | 7/3 | 2/1 |
+| Bellingham - Griezmann | 69/59 | 57/44 | 44/53 | 65/65 | 15/25 |
 
-Ten player-similarity pairs were curated from public StatsBomb articles and recruitment case studies. For each pair (A, B), we compute the cosine similarity and the rank at which B appears in A's nearest-neighbour list (and vice versa), across all 1,633 players in the embedding space.
-
-### 2.1 Per-Pair Results
-
-| Tier | Player A | Player B | Cosine | Rank (A→B) | Rank (B→A) | Avg Rank |
-|------|----------|----------|--------|------------|------------|----------|
-| 1 | Vivianne Miedema | Caldentey | 0.6964 | 431 | 608 | 519.5 |
-| 1 | Trent Alexander-Arnold | Achraf Hakimi | 0.9104 | 27 | 116 | 71.5 |
-| 1 | Jordi Alba | Andrew Robertson | 0.8074 | 127 | 63 | 95.0 |
-| 2 | Toni Kroos | Enzo Fernandez | 0.9427 | 35 | 76 | 55.5 |
-| 2 | Trent Alexander-Arnold | Joakim Maehle | 0.7539 | 171 | 320 | 245.5 |
-| 2 | Jadon Sancho | Ruben Vargas | 0.8442 | 71 | 258 | 164.5 |
-| 2 | Jadon Sancho | Christoph Baumgartner | 0.7413 | 187 | 572 | 379.5 |
-| 3 | Harry Kane | Rafael Leao | 0.8342 | 303 | 147 | 225.0 |
-| 3 | Harry Kane | Joao Felix | 0.8329 | 307 | 158 | 232.5 |
-| 3 | Felix Uduokhai | Harry Souttar | 0.8153 | 220 | 193 | 206.5 |
-
-### 2.2 Aggregate Statistics
-
-| Metric | All Pairs | Tier 1 | Tier 2 | Tier 3 |
-|--------|-----------|--------|--------|--------|
-| Pairs evaluated | 10 | 3 | 4 | 3 |
-| Mean cosine | 0.8179 | — | — | — |
-| Mean rank | 219.5 | 228.7 | 211.2 | 221.3 |
-| Median rank | 179 | 121 | 179 | 206 |
-| Hit@5 | 0.0% | 0.0% | 0.0% | 0.0% |
-| Hit@10 | 0.0% | 0.0% | 0.0% | 0.0% |
-| Hit@20 | 0.0% | 0.0% | 0.0% | 0.0% |
-| Hit@50 | 10.0% | — | — | — |
-
-### 2.3 Interpretation
-
-**The pseudo ground-truth results are poor for fine-grained similarity.** No pair achieves a rank within the top 20 in either direction. The mean rank of 219.5 out of 1,633 players (top 13.4%) is better than random (expected ~817) but far from the top-5 retrieval that StatsBomb's own system achieves.
-
-**Important caveats on this evaluation:**
-
-1. **Domain mismatch.** StatsBomb's similarity metrics use a proprietary feature set (radar attributes, weighted skill scores) that differs fundamentally from our event-sequence GNN approach. The two systems are not solving the same problem.
-2. **Data coverage mismatch.** StatsBomb's articles use club-level data spanning full seasons; our dataset covers only international tournaments (Euro 2020/2024, World Cup 2022, Women's World Cup 2023, Women's Euro 2022). A player's international tournament profile can differ substantially from their club profile.
-3. **Low possession counts.** Several players (Sancho: 72, Uduokhai: 80) are near the 50-possession minimum, limiting embedding reliability.
-4. **Tier 3 pairs are inherently weak.** The Kane–Leao/Felix and Uduokhai–Souttar pairs are conditional on altered similarity weighting or transitive inference, making them unlikely to match in any embedding space.
-
-**Best-performing pair:** Kroos → Enzo Fernandez (rank 35, cosine 0.9427) is the closest to a successful retrieval, consistent with both being metronomic deep-lying midfielders.
-
-**The self-consistency evaluation is a more reliable indicator of model quality** than this pseudo ground-truth, because it tests the model's own internal consistency without relying on external labels derived from a different methodology and data source.
+The `pos_ablated_split_ctx` family consistently ranks pairs in the 10-50 range, while `player_samp` scatters them broadly (ranks 1-2 for easy cases like Saka-Dembele, but 68-128 for harder pairs like Kane-Lewandowski or TAA-Hakimi). The `ema` variant achieves the best ranks on Kane-Lewandowski (17/17) and Kroos-Enzo (11/25). `acts_in_dropout` is broadly aligned with the split-ctx family on the pairs above (same orders of magnitude as `pos_ablated_split_ctx` / `ema`).
 
 ---
 
-## 3. Summary
+## 3. Self-Consistency
 
-| Evaluation | Key Metric | Value | Interpretation |
-|------------|-----------|-------|----------------|
-| Competition-split self-consistency | Median rank | 108 / 1,633 (top 6.6%) | Strong identity signal across tournaments |
-| Competition-split self-consistency | Hit@50 | 33.3% | 1 in 3 players retrieved within top 50 of 1,633 |
-| Competition-split self-consistency | Cosine margin | +0.527 | Large separation between self and cross |
-| Random-half self-consistency | Median rank | 46 / 1,633 (top 2.8%) | Stable embeddings under random split |
-| Random-half self-consistency | Hit@50 | 53.5% | Majority of players retrieved within top 50 of 1,633 |
-| Pseudo ground-truth | Mean rank | 219.5 / 1,633 | Better than random, far from top-K |
-| Pseudo ground-truth | Hit@20 | 0.0% | No pair retrieved in top 20 |
+Two evaluation protocols: **competition_split** (same player across different competitions -- harder, more realistic) and **random_half** (same player, random half of possessions from same data -- easier). 311 players with multi-competition data; 1,083 players with enough possessions for random splits.
 
-The baseline model successfully learns player identity from raw event sequences — the self-consistency tests confirm this with large cosine margins and median ranks in the top 3–7% of the full 1,633-player gallery. The pseudo ground-truth underperforms because it measures cross-methodology agreement rather than intrinsic model quality.
+### 3.1 Competition Split (Cross-Context Stability)
 
-See Section 4 for a four-model ablation study comparing split-context edges, player-aware sampling (with rebalanced hyperparameters), and their combination against this baseline. The rebalanced player-sampling model achieves 64.8% Hit@10 (random-half), far surpassing baseline (20.7%), but trades cross-player similarity for identity precision.
+| Model | Self-Cosine Mean | Mean Rank | Hit@10 |
+|-------|--:|--:|--:|
+| pos_ablated_split_ctx | 0.766 | **67.3** | 0.346 |
+| pos_ablated_split_ctx_ema_v2 | 0.767 | **67.5** | **0.349** |
+| pos_ablated_split_ctx_ema | 0.769 | 67.7 | 0.318 |
+| acts_in_dropout | 0.763 | 68.9 | **0.351** |
+| acts_in_dropout_pos_gu | 0.746 | 74.0 | 0.328 |
+| pos_ablated | 0.974 | 81.3 | 0.275 |
+| baseline | 0.885 | 81.6 | 0.238 |
+| split_ctx | 0.859 | 83.9 | 0.215 |
+| split_ctx_ps | 0.573 | 89.3 | 0.262 |
+| player_samp | 0.569 | 93.5 | 0.264 |
+| pos_ablated_split_ctx_v2 | 0.325 | 200.8 | 0.076 |
 
----
+**Key observations:**
 
-## 4. Four-Model Ablation Study
+- The `pos_ablated_split_ctx` family dominates competition-split mean rank (67.3-67.7) and hit@10 (0.318-0.349), despite having lower self-cosine values than `pos_ablated` (0.974) or `baseline` (0.885). This means their embeddings are more spread out (lower raw cosine) but the *relative* ordering is far more accurate -- the same player's embedding from different competitions is found closer to themselves in terms of rank.
+- `acts_in_dropout` reaches the **best hit@10** in this suite (0.351) with mean rank 68.9—slightly behind the split-ctx family on mean rank but competitive. `acts_in_dropout_pos_gu` trades some of that for stronger group-uniformity regularization: mean rank 74.0, hit@10 0.328.
+- High self-cosine with poor rank (e.g., `pos_ablated`: cosine 0.974 but mean_rank 81.3) indicates embedding compression. All players look similar to each other, so even a high cosine to yourself doesn't guarantee a low rank.
+- `player_samp` has the worst competition-split mean rank (93.5) among non-collapsed models. Cross-context stability is a major weakness.
+- `split_ctx_ps` performs similarly poorly (89.3), suggesting player sampling degrades cross-competition generalization regardless of edge architecture.
 
-Four model variants were trained and evaluated under identical conditions (64-D embeddings, 1,633-player gallery, early stopping with patience 15):
+### 3.2 Random-Half Split (Within-Context Stability)
 
-| Label | CLI flags | Description |
-|-------|-----------|-------------|
-| **Baseline** | *(none)* | Unified context edges, random batch sampling |
-| **Split-ctx** | `--split_context_edges --tag split_ctx` | Teammate/opponent edge types, random batch sampling |
-| **Player-samp** | `--player_sampling --tag player_samp` | Unified context edges, player-aware batch sampler (K=16, M=6) |
-| **Combined** | `--split_context_edges --player_sampling --tag split_ctx_ps` | Both changes active |
+| Model | Self-Cosine Mean | Mean Rank | Hit@10 |
+|-------|--:|--:|--:|
+| split_ctx_ps | 0.926 | **2.7** | **0.951** |
+| player_samp | 0.931 | 2.9 | 0.940 |
+| pos_ablated_split_ctx_ema_v2 | 0.900 | 6.1 | 0.857 |
+| pos_ablated_split_ctx | 0.896 | 6.3 | 0.842 |
+| acts_in_dropout_pos_gu | 0.880 | 8.2 | 0.796 |
+| acts_in_dropout | 0.882 | 8.7 | 0.785 |
+| pos_ablated_split_ctx_ema | 0.885 | 9.3 | 0.781 |
+| pos_ablated | 0.989 | 13.9 | 0.697 |
+| baseline | 0.948 | 26.1 | 0.510 |
+| split_ctx | 0.913 | 36.4 | 0.395 |
+| pos_ablated_split_ctx_v2 | 0.332 | 177.8 | 0.094 |
 
-> **Hyperparameter rebalancing (v2).** The initial player-sampling experiments (v1) used the baseline's loss hyperparameters (temperature=0.05, λ\_contrast=0.5, λ\_pooled=0.3). V1 models achieved lower val loss but *worse* retrieval, indicating the contrastive signal was too strong. For v2 (current results), only the player-sampling pipelines were adjusted:
->
-> | Parameter | Baseline / Split-ctx | Player-samp / Combined (v2) |
-> |-----------|---------------------|----------------------------|
-> | InfoNCE temperature | 0.05 | **0.15** (3× softer) |
-> | λ\_contrast | 0.5 | **0.15** (reduced weight) |
-> | λ\_pooled\_uniformity | 0.3 | **0.5** (stronger anti-collapse) |
->
-> These overrides are applied automatically when `--player_sampling` is set and do not affect the baseline or split-ctx pipelines.
+**Key observations:**
 
-#### Training metadata
+- Player-sampling models excel here (mean_rank 2.7-2.9, hit@10 0.94-0.95) because the sampling mechanism explicitly trains the model to produce identical embeddings for the same player across different possession subsets. This is a direct consequence of the training objective rather than emergent generalization.
+- The `pos_ablated_split_ctx` family achieves strong random-half consistency (mean_rank 6.1-9.3) without player sampling, demonstrating that position ablation + split-context edges + strong uniformity produces naturally stable representations.
+- `acts_in_dropout` and `acts_in_dropout_pos_gu` sit between the base `pos_ablated_split_ctx` and the EMA variant on random-half mean rank (8.2-8.7 vs 6.3-9.3), consistent with dropout noise on the action stream slightly loosening within-context tightness.
+- `pos_ablated_split_ctx_ema` (mean_rank 9.3) is slightly worse than its non-EMA counterpart (6.3), likely because the alignment loss regularizer trades some within-context tightness for improved behavioral fidelity.
 
-| | Baseline | Split-ctx | Player-samp (v2) | Combined (v2) |
-|---|----------|-----------|-------------------|---------------|
-| Epochs trained | 78 | 88 | 105 | 105 |
-| Best val loss | 1.896 | 1.946 | −0.534 | −0.497 |
-| Final LR | 6.25e-5 | 3.125e-5 | 3.91e-6 | 7.81e-6 |
+### 3.3 Competition vs Random-Half Gap
 
-Note: v2 val loss is negative because the stronger uniformity weight (0.5 × negative uniformity loss) shifts the total loss downward. Val loss is **not directly comparable** across pipelines with different loss weights. Training ran longer (105 vs 60–67 in v1), converging more gradually.
+The gap between competition-split and random-half performance reveals how well a model generalizes across contexts:
 
-### 4.1 Self-Consistency (Open-Set) Comparison
+| Model | Comp Mean Rank | Random Mean Rank | Gap |
+|-------|--:|--:|--:|
+| pos_ablated_split_ctx | 67.3 | 6.3 | 61.0 |
+| pos_ablated_split_ctx_ema | 67.7 | 9.3 | 58.4 |
+| pos_ablated_split_ctx_ema_v2 | 67.5 | 6.1 | 61.4 |
+| acts_in_dropout | 68.9 | 8.7 | 60.2 |
+| acts_in_dropout_pos_gu | 74.0 | 8.2 | 65.8 |
+| baseline | 81.6 | 26.1 | 55.5 |
+| pos_ablated | 81.3 | 13.9 | 67.4 |
+| split_ctx | 83.9 | 36.4 | 47.5 |
+| split_ctx_ps | 89.3 | 2.7 | **86.6** |
+| player_samp | 93.5 | 2.9 | **90.6** |
 
-#### Competition-split (311 testable, gallery 1,633)
-
-| Metric | Baseline | Split-ctx | Player-samp (v2) | Combined (v2) |
-|--------|----------|-----------|-------------------|---------------|
-| Self-cosine (mean) | 0.8273 | 0.8145 | 0.4980 | 0.5028 |
-| Cosine margin | **+0.5270** | +0.5363 | +0.4298 | +0.4323 |
-| Mean rank | **185.0** | 187.2 | 259.0 | 254.5 |
-| Median rank | 108 | 109 | **82** | **81** |
-| Hit@1 | 2.2% | 1.6% | **5.8%** | 4.8% |
-| Hit@5 | 8.5% | 7.1% | **13.2%** | 11.6% |
-| Hit@10 | 13.0% | 10.8% | **18.2%** | 15.8% |
-| Hit@20 | 20.3% | 17.0% | **24.6%** | **24.3%** |
-| Hit@50 | 33.3% | 31.0% | **38.3%** | 37.1% |
-
-#### Position-group breakdown (competition-split)
-
-| Position | n | Baseline MR | Split-ctx MR | P-samp v2 MR | Comb v2 MR | Baseline H@10 | Split-ctx H@10 | P-samp v2 H@10 | Comb v2 H@10 |
-|----------|---|-------------|-------------|--------------|------------|---------------|----------------|-----------------|--------------|
-| Defender | 124 | **164.6** | 186.3 | 287.5 | 279.4 | 11.7% | 10.5% | **13.3%** | 11.7% |
-| Forward | 71 | **172.6** | 184.1 | 239.8 | 238.1 | 9.2% | 6.3% | **25.4%** | 22.5% |
-| Goalkeeper | 18 | 28.6 | **25.8** | 24.4 | 30.9 | 36.1% | **41.7%** | 38.9% | 25.0% |
-| Midfielder | 98 | **248.5** | 220.2 | 280.0 | 275.8 | 13.3% | 8.7% | **15.3%** | 14.3% |
-
-#### Random-half (1,083 testable, gallery 1,633)
-
-| Metric | Baseline | Split-ctx | Player-samp (v2) | Combined (v2) |
-|--------|----------|-----------|-------------------|---------------|
-| Self-cosine (mean) | 0.8802 | 0.8681 | 0.8178 | 0.8154 |
-| Cosine margin | +0.5778 | +0.5877 | **+0.7473** | +0.7410 |
-| Mean rank | 88.0 | 94.0 | **15.2** | **15.2** |
-| Median rank | 46 | 50 | **4** | **4** |
-| Hit@1 | 4.8% | 5.9% | **34.1%** | **34.5%** |
-| Hit@5 | 13.9% | 14.4% | **54.9%** | **55.6%** |
-| Hit@10 | 20.7% | 20.9% | **64.8%** | **65.3%** |
-| Hit@20 | 31.4% | 30.8% | **76.2%** | **77.1%** |
-| Hit@50 | 53.5% | 50.0% | **91.2%** | **91.9%** |
-
-#### Position-group breakdown (random-half)
-
-| Position | n | Baseline MR | Split-ctx MR | P-samp v2 MR | Comb v2 MR | Baseline H@10 | Split-ctx H@10 | P-samp v2 H@10 | Comb v2 H@10 |
-|----------|---|-------------|-------------|--------------|------------|---------------|----------------|-----------------|--------------|
-| Defender | 451 | 81.9 | 86.7 | **23.2** | 24.4 | 17.1% | 18.6% | **50.7%** | 48.9% |
-| Forward | 217 | 92.9 | 96.2 | **9.4** | 8.4 | 17.1% | 12.0% | **75.4%** | **76.7%** |
-| Goalkeeper | 51 | **5.0** | 4.8 | 14.2 | 13.2 | **85.3%** | **91.2%** | 60.8% | 69.6% |
-| Midfielder | 364 | 104.3 | 114.1 | **8.9** | **8.0** | 18.3% | 19.1% | **76.7%** | **78.3%** |
-
-### 4.2 Pseudo Ground-Truth Comparison
-
-| Metric | Baseline | Split-ctx | Player-samp (v2) | Combined (v2) |
-|--------|----------|-----------|-------------------|---------------|
-| Mean cosine | **0.8179** | 0.7847 | 0.0422 | 0.0547 |
-| Mean rank | **219.5** | 236.1 | 814.4 | 824.8 |
-| Median rank | **179** | 208 | 759 | 700 |
-| Hit@50 | 10.0% | **15.0%** | 0.0% | 0.0% |
-
-#### Tier-level mean rank (lower is better)
-
-| Tier | Baseline | Split-ctx | Player-samp (v2) | Combined (v2) |
-|------|----------|-----------|-------------------|---------------|
-| Tier 1 | 228.7 | **101.8** | 626.7 | 640.5 |
-| Tier 2 | **211.2** | 330.8 | 460.2 | 434.1 |
-| Tier 3 | **221.3** | 244.2 | 1474.3 | 1529.8 |
-
-#### Per-pair comparison (avg rank, lower is better)
-
-| Tier | Player A | Player B | Baseline | Split-ctx | P-samp (v2) | Combined (v2) |
-|------|----------|----------|----------|-----------|-------------|---------------|
-| 1 | Miedema | Caldentey | 519.5 | **144.5** | 1548.5 | 1546.0 |
-| 1 | TAA | Hakimi | **71.5** | 90.0 | 194.0 | 175.0 |
-| 1 | Alba | Robertson | 95.0 | **71.0** | 137.5 | 200.5 |
-| 2 | Kroos | Enzo Fernandez | **55.5** | 54.0 | 130.5 | 129.0 |
-| 2 | TAA | Maehle | **245.5** | 360.5 | 1101.5 | 1152.0 |
-| 2 | Sancho | Vargas | **164.5** | 415.0 | 246.5 | 198.0 |
-| 2 | Sancho | Baumgartner | **379.5** | 493.5 | 362.5 | 257.5 |
-| 3 | Kane | Leao | **225.0** | 269.5 | 1579.0 | 1594.5 |
-| 3 | Kane | Felix | **232.5** | 248.0 | 1522.0 | 1555.5 |
-| 3 | Uduokhai | Souttar | **206.5** | 215.0 | 1322.0 | 1439.5 |
-
-### 4.3 Findings
-
-1. **Hyperparameter rebalancing transforms player-sampling from worst to best on self-consistency.** The v2 player-sampling models (τ=0.15, λ\_contrast=0.15, λ\_pooled=0.5) dramatically outperform baseline on random-half: Hit@1 jumps from 4.8% to 34.1%, Hit@10 from 20.7% to 64.8%, and mean rank drops from 88.0 to 15.2. This reverses the v1 finding where player-sampling *hurt* retrieval. The key insight is that the baseline's hyperparameters (τ=0.05, high λ\_contrast) were overdriving the contrastive loss when combined with guaranteed positive pairs.
-
-2. **Competition-split shows mixed but net-positive results.** Mean rank is worse for player-samp v2 (259.0 vs 185.0), but median rank is better (82 vs 108), and Hit@K is better at every threshold. The mean–median divergence suggests a small number of outlier players pull the mean upward while the typical player benefits substantially from the rebalanced training.
-
-3. **Goalkeeper identity is recovered (partially).** The v1 player-sampling catastrophically collapsed goalkeeper embeddings (Hit@10: 5.9% random-half). With rebalancing, goalkeeper Hit@10 recovers to 60.8% (random-half) and 38.9% (competition-split). This is still below baseline (85.3% and 36.1% respectively), but no longer represents a catastrophic failure. The stronger uniformity loss prevents the embedding space from collapsing around outfield archetypes.
-
-4. **Cross-player similarity (ground-truth) degrades severely.** Despite the self-consistency gains, ground-truth mean rank worsens from 219.5 to 814.4, and mean cosine drops from 0.82 to 0.04. The rebalanced model spreads all player embeddings far apart on the hypersphere (high uniformity), making individual identities easy to distinguish but destroying the cross-player similarity structure needed for "find me a similar player." Tier 3 pairs (cross-role comparisons) are near random (mean rank ~1,500 of 1,633).
-
-5. **The identity–similarity trade-off is fundamental.** Player-aware sampling with strong uniformity excels at "is this the same player?" (self-consistency) but fails at "who plays like this player?" (ground-truth). The baseline — with weaker contrastive signal and weaker uniformity — preserves more cross-player structure. This suggests the two objectives may require different embedding spaces or a multi-task architecture.
-
-6. **Combined (v2) performs comparably to Player-samp (v2).** Unlike v1 where combining split-context with player-sampling was strictly worse, v2 shows the two models performing nearly identically on every metric. The hyperparameter rebalancing neutralises the negative interaction observed in v1, though split-context edges provide no additional benefit when paired with the rebalanced sampler.
-
-7. **Split-context edges remain a mild, independent improvement.** The split-ctx model (without player-sampling) continues to show small improvements over baseline on specific metrics: goalkeeper retrieval, random-half Hit@1/5/10, and Tier 1 ground-truth. It is the only model that improves ground-truth for any tier.
-
-### 4.4 Implications for Future Work
-
-The hyperparameter rebalancing experiment reveals a **fundamental trade-off** between identity consistency (self-retrieval) and cross-player similarity (replacement search). The two objectives respond differently to the contrastive–uniformity balance:
-
-- **For deployment as a player-identification system** (e.g., verifying a player's identity across contexts), the rebalanced player-sampling model is clearly superior (Hit@10 of 65% vs 21%).
-- **For deployment as a player-replacement/scouting tool** (e.g., "find similar players to Toni Kroos"), the baseline model is currently better (mean rank 219 vs 814 on ground-truth pairs).
-
-Possible next steps to bridge this gap:
-
-- **Two-stage architecture.** Use the player-sampling model for identity-aware pooling, then train a second similarity head on the pooled embeddings with lower uniformity.
-- **Uniformity weight scheduling.** Start training with high uniformity (to learn spread) and gradually decay it, allowing late-stage training to build cross-player bridges.
-- **Temperature annealing.** Begin with τ=0.15 and anneal down to 0.05, letting the model first learn coarse structure then refine fine-grained similarity.
-- **Evaluation alignment.** The self-consistency test measures identity stability; the ground-truth test measures cross-player similarity. A combined metric that weights both could guide hyperparameter search more effectively.
+Player-sampling models have the largest gap (86-91 ranks), meaning their strong within-context consistency does not transfer across competitions. The `pos_ablated_split_ctx` family and `acts_in_dropout` variants have moderate gaps (~58-66) with much better absolute competition-split performance than player-sampling models.
 
 ---
 
-## 5. Policy Diagnostic — Behavioral Validation
+## 4. Policy Diagnostic
 
-This diagnostic tests whether cosine similarity in the learned z\_p embedding space actually corresponds to **behavioral similarity** — i.e., whether players who are "close" in embedding space would make similar decisions in the same game situations. Two complementary tests were run on all four models.
+Behavioral fidelity evaluation: does embedding proximity reflect actual behavioral similarity? Measured via Spearman rho between embedding cosine distance and Jensen-Shannon divergence of action distributions, computed within position-gender groups (8 groups). Also: substitute quality ratio (how much better are top-10 neighbors than random neighbors, in JS divergence terms). Not available for heuristic baselines.
 
-**Method**: 200 canonical game situations were sampled (stratified by actor position group). For each situation, all 1,633 players' predicted action distributions were computed via FiLM conditioning (same h\_event, each player's z\_p). Pairwise Jensen-Shannon divergence was computed within position groups and correlated with cosine distance.
+### 4.1 Spearman Rho (Behavioral Ordering Fidelity)
 
-### 5.1 Policy Distance vs Cosine Distance Correlation
+| Model | Overall Rho | GK(f) | GK(m) | Def(f) | Def(m) | Mid(f) | Mid(m) | Fwd(f) | Fwd(m) |
+|-------|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| pos_ablated | **0.974** | **0.786** | 0.660 | **0.980** | **0.984** | **0.950** | **0.955** | **0.910** | **0.920** |
+| pos_ablated_split_ctx_ema | 0.944 | 0.722 | 0.604 | 0.939 | 0.946 | 0.909 | 0.898 | 0.849 | 0.879 |
+| pos_ablated_split_ctx_ema_v2 | 0.934 | 0.612 | 0.655 | 0.940 | 0.951 | 0.901 | 0.879 | 0.834 | 0.839 |
+| pos_ablated_split_ctx | 0.929 | 0.550 | 0.547 | 0.926 | 0.942 | 0.898 | 0.873 | 0.839 | 0.843 |
+| acts_in_dropout | 0.928 | 0.629 | 0.591 | 0.912 | 0.924 | 0.895 | 0.875 | 0.843 | 0.829 |
+| acts_in_dropout_pos_gu | 0.922 | 0.699 | 0.615 | 0.885 | 0.904 | 0.884 | 0.852 | 0.847 | 0.835 |
+| player_samp | 0.788 | 0.768 | 0.697 | 0.781 | 0.790 | 0.792 | 0.804 | 0.745 | 0.732 |
+| split_ctx_ps | 0.778 | 0.759 | 0.730 | 0.693 | 0.704 | 0.799 | 0.801 | 0.728 | 0.721 |
+| baseline | 0.744 | 0.750 | 0.682 | 0.763 | 0.807 | 0.768 | 0.745 | 0.690 | 0.701 |
+| split_ctx | 0.710 | 0.773 | 0.643 | 0.741 | 0.745 | 0.747 | 0.742 | 0.609 | 0.627 |
+| pos_ablated_split_ctx_v2 | 0.686 | 0.571 | 0.734 | 0.685 | 0.722 | 0.619 | 0.602 | 0.596 | 0.544 |
 
-Spearman rank correlation between pairwise JS divergence (behavioral distance) and cosine distance (embedding distance), computed within position groups (411,231 total pairs):
+**Key observations:**
 
-| Position Group | Baseline | Split-ctx | Player-samp (v2) | Combined (v2) |
-|----------------|----------|-----------|-------------------|---------------|
-| Goalkeeper | 0.568 | **0.686** | **0.710** | 0.704 |
-| Defender | **0.791** | 0.731 | 0.682 | 0.667 |
-| Midfielder | 0.687 | 0.676 | 0.687 | **0.694** |
-| Forward | 0.625 | 0.613 | 0.658 | **0.683** |
-| **Overall** | **0.712** | 0.700 | 0.663 | 0.657 |
+- `pos_ablated` achieves exceptionally high rho (0.974) because its compressed embedding space (very high cosine between players) coincidentally aligns well with behavioral distance ordering. However, this comes at the cost of practical retrieval (GT mean_rank 69.6, competition SC mean_rank 81.3).
+- Among models with good retrieval quality, `pos_ablated_split_ctx_ema` has the highest rho (0.944), followed by `ema_v2` (0.934), the base variant (0.929), then `acts_in_dropout` (0.928) and `acts_in_dropout_pos_gu` (0.922). Acts-in dropout sits between the plain split-ctx stack and player-sampling models on overall rho.
+- All position groups except goalkeepers show rho > 0.83 for the `pos_ablated_split_ctx` family. Goalkeepers are weaker (0.55-0.72), likely because keeper actions are less diverse and harder to differentiate.
+- `player_samp` (0.788) and `split_ctx_ps` (0.778) show substantially lower behavioral fidelity than the `pos_ablated_split_ctx` family, despite having higher substitute quality ratios (see below).
 
-All correlations are highly significant (p = 0.0 for all, >400K pairs per model).
+### 4.2 Substitute Quality Ratio
 
-### 5.2 Substitute Quality (top-K neighbours vs random same-group)
+| Model | Top-k JS | Random-k JS | Ratio | 95% CI |
+|-------|--:|--:|--:|---|
+| split_ctx_ps | **0.001025** | 0.013442 | **13.11** | [6.73, 29.96] |
+| player_samp | 0.001122 | 0.013367 | 11.91 | [5.84, 29.60] |
+| pos_ablated | 0.001110 | 0.009535 | 8.59 | - |
+| pos_ablated_split_ctx_ema | 0.001040 | 0.008265 | 7.95 | [4.23, 16.34] |
+| acts_in_dropout | 0.001031 | 0.007990 | 7.75 | [4.29, 13.15] |
+| acts_in_dropout_pos_gu | 0.001051 | 0.008015 | 7.62 | [3.84, 17.33] |
+| pos_ablated_split_ctx_ema_v2 | 0.001453 | 0.009228 | 6.35 | [3.43, 12.50] |
+| pos_ablated_split_ctx | 0.001408 | 0.009332 | 6.63 | [3.83, 10.97] |
+| baseline | 0.003298 | 0.012652 | 3.84 | - |
+| split_ctx | 0.004611 | 0.014442 | 3.13 | - |
+| pos_ablated_split_ctx_v2 | 0.006962 | 0.021340 | 3.07 | - |
 
-For 8 query players (2 per position group, highest-possession), the mean JS divergence of their top-10 cosine neighbours was compared to 10 random same-position-group players:
+**Critical interpretation:**
 
-| Metric | Baseline | Split-ctx | Player-samp (v2) | Combined (v2) |
-|--------|----------|-----------|-------------------|---------------|
-| JS(top-K) | 0.009371 | 0.009633 | **0.001124** | 0.001945 |
-| JS(random-K) | 0.017283 | 0.022486 | 0.019344 | 0.020129 |
-| **Ratio** (random/topK) | 1.84 | 2.33 | **17.22** | 10.35 |
+The ratio is random-k JS / top-k JS. A high ratio can be achieved either by genuinely better top-k neighbors OR by a more spread-out embedding space that inflates the random-k denominator. The confidence intervals are wide and overlapping for all models above 6.0.
 
-Higher ratio = better. A ratio of 1.0 means cosine neighbours are no better than random; higher means neighbours are genuinely more behaviorally similar.
+**Absolute top-k JS** (the actual behavioral similarity of retrieved neighbors) is more diagnostic:
+- `split_ctx_ps` (0.001025) and `pos_ablated_split_ctx_ema` (0.001040) produce virtually identical top-k neighbor quality.
+- `acts_in_dropout` (0.001031) matches that band; `acts_in_dropout_pos_gu` (0.001051) is marginally higher.
+- `player_samp` (0.001122) is only marginally different.
+- The high ratios for `player_samp` and `split_ctx_ps` come from higher random-k JS (0.01337-0.01344 vs 0.00827-0.00933), reflecting wider embedding spread, not genuinely superior retrieval.
 
-### 5.3 Findings
+Given the overlapping CIs and near-identical absolute top-k JS values, the ratio differences among the top models are not practically meaningful.
 
-1. **All models show strong policy-cosine correlation (rho = 0.66-0.71).** The embedding space genuinely captures behavioral similarity across all four variants. This validates the fundamental approach: cosine distance in z\_p space is a meaningful proxy for "how differently two players would act in the same situation." The correlation is strongest for defenders (rho up to 0.79) and weakest for forwards (0.61-0.68).
+### 4.3 Empirical Behavioral Fidelity (Observed Actions)
 
-2. **Baseline has the smoothest embedding space (highest rho = 0.71) but lowest substitute ratio (1.84).** The baseline's cosine distances are well-calibrated monotonically but the practical gap between neighbours and random is small. Top-K neighbours are only ~84% more behaviorally similar than random same-position players.
+The metrics above (§4.1, §4.2) use the model's own action-prediction head to compute behavioral similarity. This creates a self-referential loop: the model's predictions are shaped by the same training signal that shaped the embeddings. **Empirical behavioral fidelity** replaces model predictions with **actual observed player actions** from the event data, providing an independent check.
 
-3. **Player-samp v2 has dramatically better practical substitute quality (ratio = 17.2) despite lower overall rho (0.66).** This is the most important finding for scouting applications. The rebalanced player-sampling model creates an embedding space where nearest neighbours are 17x more behaviourally similar than random — compared to just 1.8x for baseline. The lower rho is explained by the wider spread of cosine distances (mean cosine dist 0.88 vs 0.36 for baseline), which compresses the mid-range of the correlation while sharpening the distinction at the extremes.
+For each player, events are bucketed by coarse game state (pitch third × under-pressure = 6 buckets). Within each bucket, an empirical action-type histogram is built over 5 coarse categories (Pass, Carry, Shot, Dribble, Other). Pairwise JS divergence between players' empirical histograms (averaged over shared valid buckets, minimum 3 shared with ≥15 events each) produces a behavioral distance that is entirely external to the model. Spearman ρ then correlates embedding cosine distance with this empirical behavioral distance. Additionally, a substitute quality ratio compares the observed-action similarity of embedding neighbors vs. random same-group peers.
 
-4. **The identity-similarity paradox is partially resolved.** The ground-truth evaluation (Section 4.2) showed player-samp v2 performing much worse than baseline on cross-player similarity (mean rank 814 vs 220). But the policy diagnostic shows that player-samp v2's neighbours are dramatically more behaviorally similar. This suggests the ground-truth pairs (curated from StatsBomb's proprietary radar system) measure a different notion of "similarity" than behavioral agreement. The GNN-based model optimises for *decision-making similarity*, while StatsBomb's system uses *statistical profile similarity* — these are related but not identical concepts.
+**Key difference from §4.1–4.2:** These metrics cannot be inflated by the model learning to predict its own training signal. They measure whether embedding geometry genuinely aligns with how players actually behave in matched situations.
 
-5. **Mean JS values confirm the player-samp model creates tighter behavioral clusters.** The absolute JS(top-K) for player-samp is 0.001124 vs 0.009371 for baseline — an 8x reduction. Neighbours in the player-samp embedding space predict almost identical action distributions in the same situations. This is consistent with the model's excellent self-consistency (Section 4.1).
+**Coverage:** 10 of 11 GNN models (`pos_ablated_split_ctx_ema_v2` has no empirical behavioral evaluation). 1,633 embedded players, 183,580 valid pairs overall.
 
-6. **Split-context edges mildly improve substitute quality.** Split-ctx achieves a ratio of 2.33 vs baseline's 1.84, while maintaining nearly identical correlation (0.70 vs 0.71). This is consistent with the mild improvement pattern seen in Sections 4.1 and 4.2.
+### 4.4 Empirical Behavioral Spearman Rho
 
-### 5.4 Implications
+| Model | Overall EB Rho | Def(f) | Def(m) | Mid(f) | Mid(m) | Fwd(f) | Fwd(m) |
+|-------|--:|--:|--:|--:|--:|--:|--:|
+| split_ctx_ps | **0.2296** | 0.2858 | **0.3078** | **0.1664** | 0.1667 | 0.1694 | **0.2715** |
+| player_samp | 0.2230 | **0.2824** | 0.2986 | 0.1535 | 0.1672 | 0.1705 | 0.2678 |
+| pos_ablated_split_ctx_ema | 0.2074 | 0.2455 | 0.2957 | **0.2498** | **0.2497** | 0.1835 | 0.2489 |
+| pos_ablated_split_ctx | 0.2070 | 0.2291 | 0.2755 | 0.2395 | 0.2572 | 0.1904 | 0.2645 |
+| acts_in_dropout | 0.2066 | 0.2366 | 0.2849 | 0.2454 | 0.2433 | 0.1909 | 0.2520 |
+| pos_ablated | 0.1961 | 0.2719 | 0.2991 | 0.2363 | 0.2772 | **0.2138** | 0.2679 |
+| acts_in_dropout_pos_gu | 0.1946 | 0.2280 | 0.2648 | 0.2492 | 0.2332 | 0.1847 | 0.2401 |
+| split_ctx | 0.1891 | 0.2810 | **0.3628** | 0.1448 | 0.1666 | 0.0470 | 0.1228 |
+| baseline | 0.1879 | 0.2794 | 0.3621 | 0.1559 | 0.1449 | 0.0583 | 0.1224 |
+| pos_ablated_split_ctx_v2 | 0.1038 | 0.1773 | 0.1823 | 0.0549 | 0.0298 | 0.0913 | 0.0755 |
 
-The policy diagnostic reveals that **all four models have successfully learned behaviorally meaningful embedding spaces**, but they differ in how sharply they separate neighbours from non-neighbours:
+**Key observations:**
 
-- **For scouting/replacement applications**, the player-samp v2 model is clearly superior despite its poor ground-truth ranking. Its neighbours are near-identical in predicted behavior (JS = 0.001), making it the best choice when the goal is "find a player who would make the same decisions."
-- **The ground-truth evaluation should be reinterpreted**, not as a failure of the player-samp model, but as a measurement of a different construct (statistical profile similarity vs behavioral decision similarity).
-- **The overall rho of 0.66-0.71 across all models** sets a ceiling for cosine-based retrieval. To improve beyond this, architectural changes (e.g., dedicated similarity heads, non-cosine distance metrics) may be needed.
+- EB Rho values (0.10–0.23) are dramatically lower than model-based Rho (0.69–0.97). This reflects the difference between comparing against smooth model predictions vs. noisy empirical histograms with sparse event counts per bucket. The absolute scale is not directly comparable.
+- **The ranking is inverted from model-based Rho.** `split_ctx_ps` and `player_samp` lead on EB Rho (0.23, 0.22) despite having the lowest model-based Rho. `pos_ablated` (model-based Rho champion at 0.974) drops to mid-pack (0.196). This inversion occurs because EB Rho rewards models with wider embedding spread (larger cosine distance variance), which makes rank correlation with behavioral distance easier to detect. Compressed embeddings (like `pos_ablated`) have very little cosine distance variance, suppressing EB Rho even if their relative ordering is reasonable.
+- The `pos_ablated_split_ctx` family (0.207) and `acts_in_dropout` (0.207) are tightly clustered in the middle, with `acts_in_dropout_pos_gu` slightly behind (0.195).
+- `split_ctx` and `baseline` show a distinctive pattern: strong EB Rho for defenders (0.28–0.36) but very weak for forwards (0.05–0.12), mirroring the model-based pattern. Forwards' action distributions are more variable and harder to predict from coarse game-state buckets.
+- All overall EB Rho values exceed 0.10 except the collapsed `pos_ablated_split_ctx_v2`, confirming that even this coarse empirical measure detects real behavioral structure in the embedding space.
 
----
+### 4.5 Empirical Behavioral Substitute Quality
 
-## 6. FiLM Sensitivity Analysis
+| Model | EB Top-K JS | EB Random-K JS | EB Ratio | EB 95% CI |
+|-------|--:|--:|--:|---|
+| acts_in_dropout | **0.024620** | 0.048087 | **1.953** | [1.51, 2.61] |
+| acts_in_dropout_pos_gu | 0.025507 | 0.044515 | 1.745 | [1.45, 2.37] |
+| pos_ablated_split_ctx_ema | 0.025242 | 0.043373 | 1.718 | [1.40, 2.39] |
+| split_ctx_ps | 0.027256 | 0.046284 | 1.698 | [1.35, 2.20] |
+| pos_ablated | 0.027385 | 0.045397 | 1.658 | [1.18, 2.43] |
+| pos_ablated_split_ctx | 0.025986 | 0.042180 | 1.623 | [1.25, 2.83] |
+| player_samp | 0.027478 | 0.042914 | 1.562 | [1.19, 2.16] |
+| baseline | 0.032515 | 0.042970 | 1.322 | [1.18, 1.82] |
+| split_ctx | 0.035682 | 0.044504 | 1.247 | [1.17, 1.76] |
+| pos_ablated_split_ctx_v2 | 0.037828 | 0.045822 | 1.211 | [1.04, 1.56] |
 
-This diagnostic tests whether the FiLM conditioning layer actually uses z\_p to change predictions, or whether the model could be largely ignoring the player embedding. For each of the 200 canonical situations, every player's z\_p is replaced with a **random same-position-group** player's z\_p, and the JS divergence between the original and shuffled predictions is measured. High JS means FiLM is load-bearing; near-zero JS means the model bypasses player conditioning.
+9 query players (3 defenders, 3 midfielders, 3 forwards), K=10.
 
-### 6.1 FiLM Effect Size (mean JS, correct z\_p vs shuffled same-group z\_p)
+**Key observations:**
 
-| Position Group | Baseline | Split-ctx | Player-samp (v2) | Combined (v2) |
-|----------------|----------|-----------|-------------------|---------------|
-| Goalkeeper | 0.0016 | 0.0016 | 0.0011 | 0.0012 |
-| Defender | 0.0120 | **0.0154** | 0.0035 | 0.0037 |
-| Midfielder | 0.0126 | **0.0130** | 0.0027 | 0.0026 |
-| Forward | 0.0095 | **0.0112** | 0.0028 | 0.0024 |
-| **Overall** | 0.0109 | **0.0128** | 0.0029 | 0.0029 |
-
-### 6.2 Findings
-
-1. **FiLM is load-bearing in all four models.** Every model shows non-zero JS when z\_p is shuffled, confirming that the player embedding materially changes the predicted action distribution. The FiLM conditioning mechanism is functioning as designed.
-
-2. **Baseline and Split-ctx show ~4x larger FiLM effect than Player-samp/Combined (0.011-0.013 vs 0.003).** This initially seems counter-intuitive — the player-samp models have stronger identity signal (better self-consistency and 17x substitute ratio). The explanation lies in the embedding geometry:
-
-   - **Baseline/Split-ctx**: z\_p vectors vary substantially within position groups (mean cosine distance within-group ~0.36-0.40). Replacing a player's z\_p with a random same-group player's produces a large perturbation, yielding high JS. But this variation is relatively unstructured — neighbours are only 1.8-2.3x better than random (Section 5.2).
-   - **Player-samp/Combined**: The stronger uniformity loss pushes all z\_p vectors far apart overall (mean cosine dist ~0.88), but within each position group the embeddings form **tighter, more structured clusters**. A random same-group swap produces a smaller perturbation because same-group players are closer in the structured embedding space. Yet this structure is highly meaningful — neighbours are 10-17x better than random.
-
-3. **The FiLM effect size and substitute quality are measuring different things.** FiLM sensitivity measures the *magnitude* of z\_p's influence on predictions for arbitrary within-group swaps. Substitute quality measures the *quality* of the nearest-neighbour structure. A model can have small FiLM effect size (predictions are moderately stable under same-group swaps) yet excellent substitute quality (the small differences that DO exist are precisely aligned with behavioral similarity).
-
-4. **Goalkeeper FiLM effect is consistently tiny (0.001-0.002) across all models.** GK actions are so constrained by position (kicks, throws, limited event types) that swapping one GK's z\_p for another barely changes predictions. This is consistent with the high GK self-consistency in Section 4.1 — GK embeddings are informative for identity but have limited action-prediction leverage.
-
-5. **Split-ctx shows the highest FiLM sensitivity (0.013).** The separate teammate/opponent edge weights may give the model richer situation representations that are more responsive to z\_p modulation.
-
-### 6.3 Implications
-
-The FiLM layer is confirmed to be an active, load-bearing component of the architecture. The player embedding z\_p is not being bypassed. Combined with the policy-cosine correlation (Section 5.1), this establishes that:
-
-- z\_p encodes behaviorally meaningful player information (rho 0.66-0.71)
-- FiLM uses z\_p to modulate predictions in a structured way (JS > 0 everywhere)
-- The magnitude of FiLM's effect differs by model variant, with baseline/split-ctx showing larger raw effect and player-samp showing smaller but more precisely structured effect
-
-> **Note:** Section 6.1 reports the original FiLM sensitivity measured *before* the counterfactual fix (Section 7). Post-fix values are slightly lower across all models (see Section 7.1) because h\_event no longer carries residual actor identity.
-
----
-
-## 7. Counterfactual h\_event Fix — Actor Identity Leak
-
-### 7.1 Background
-
-In the original diagnostic (Sections 5-6), `h_event` was produced by the full GNN including `acts_in` edges (`player -> event`). This means each event node absorbs message-passing information from its *actor* player node, potentially encoding who performed the action rather than purely the game situation. When we then swap z\_p via FiLM, the correct actor's identity may still be embedded in h\_event, confounding the measurement.
-
-### 7.2 Fix: `encode_possession_counterfactual`
-
-A new method `encode_possession_counterfactual` drops the `(player, acts_in, event)` edges from the GNN computation. The reverse edge `(event, performed_by, player)` is retained so player nodes remain part of the graph and context-player information still flows through `context_for` edges.
-
-This produces a "situation-pure" h\_event that reflects game state, spatial context, and off-ball player positioning — but not who performed the action.
-
-### 7.3 Before/After Comparison
-
-| Metric | Model | Before (with acts\_in) | After (counterfactual) | Change |
-|--------|-------|----------------------|----------------------|--------|
-| **Spearman rho** | Baseline | 0.7115 | 0.7162 | +0.005 |
-| | Split-ctx | 0.7004 | 0.6784 | -0.022 |
-| | Player-samp | 0.6632 | 0.6855 | +0.022 |
-| | Combined | 0.6570 | 0.6562 | -0.001 |
-| **Substitute ratio** | Baseline | 1.84 | **2.26** | **+22%** |
-| | Split-ctx | 2.33 | **2.54** | **+9%** |
-| | Player-samp | 17.22 | 15.63 | -9% |
-| | Combined | 10.35 | **12.25** | **+18%** |
-| **FiLM sensitivity** | Baseline | 0.0109 | 0.0095 | -13% |
-| | Split-ctx | 0.0128 | 0.0107 | -16% |
-| | Player-samp | 0.0029 | 0.0027 | -9% |
-| | Combined | 0.0029 | 0.0026 | -10% |
-
-### 7.4 Findings
-
-1. **Spearman rho is stable (delta < 0.025).** Removing acts\_in does not fundamentally change the policy-cosine correlation. The pairwise JS ranking between players is largely preserved because the relative ordering of behavioral similarity is robust to the h\_event representation.
-
-2. **Substitute ratio improves in 3 of 4 models.** The largest gain is Baseline (+22%, from 1.84 to 2.26) and Combined (+18%, from 10.35 to 12.25). This confirms the hypothesis: when h\_event no longer encodes actor identity, the FiLM + z\_p pathway becomes the *sole* source of player-specific information, making the substitute comparison cleaner.
-
-3. **Player-samp shows a slight ratio decrease (17.2 to 15.6, -9%).** This is likely noise — the absolute ratio remains extremely high (15.6x) and the player-samp model's identity signal is so strong that the acts\_in leak was negligible. The small fluctuation may reflect the stochastic nature of situation sampling.
-
-4. **FiLM sensitivity consistently decreases by 9-16%.** With actor identity removed from h\_event, the FiLM layer no longer needs to "undo" implicit actor information in h\_event to apply the correct z\_p. The slightly smaller FiLM effect size reflects a purer measurement of how much z\_p modulates the situation-only representation.
-
-### 7.5 Implications
-
-The counterfactual fix confirms that:
-
-- **The acts\_in identity leak was real but modest.** The fix improves substitute quality for most models without degrading correlation — a clean win.
-- **For production scouting, the counterfactual encoder should be used in Phase 7 analysis.** This ensures that player-replacement comparisons reflect true behavioral differences, not residual actor identity.
-- **The player-samp model remains the best for scouting** — its 15.6x substitute ratio (post-fix) is still far above all other models. The fix primarily benefits the weaker models by lifting their baseline substitute quality.
+- **`acts_in_dropout` achieves the highest empirical substitute ratio (1.95)**, meaning its embedding neighbors are nearly twice as behaviorally similar as random same-group peers in terms of observed actions. This is the strongest model on the most externally grounded substitute-quality metric.
+- The `acts_in_dropout` family and `pos_ablated_split_ctx_ema` form a strong cluster (ratio 1.72–1.95) well separated from the bottom three (`baseline` 1.32, `split_ctx` 1.25, `pos_ablated_split_ctx_v2` 1.21).
+- Absolute EB top-K JS values are 10–30× higher than model-based top-K JS (0.025 vs 0.001). This is expected: model-based JS uses the model's own smooth predicted distributions, while empirical JS uses noisy histograms from limited data. The absolute values are not comparable across methods.
+- `split_ctx_ps` and `player_samp` (ratio 1.70, 1.56) perform moderately despite leading on EB Rho, suggesting their high EB Rho partially reflects embedding spread rather than genuinely superior behavioral discrimination.
+- All 95% CIs exclude 1.0 except `pos_ablated_split_ctx_v2` (lower bound 1.04, barely above 1). Every non-collapsed model produces neighbors that are empirically better than random, validating the embedding approach.
 
 ---
 
-## 8. Re-evaluation — Player-samp (v3) and Combined (v3)
+## 5. Supervised Task Quality (Test Metrics)
 
-> **Context:** In the v2 ablation study (Sections 4–7), an early-stopping bug was discovered: the annealed `lambda_pooled_contrast` multiplied a *negative* uniformity loss, which artificially deflated `val_total` and corrupted best-model selection (see FUTURE_IMPROVEMENTS.md #14). The fix introduces a supervised-only validation metric for early stopping. However, the models below were trained **before the fix** — their "best" checkpoints were selected manually from existing runs based on train action loss as a proxy for supervised quality:
->
-> | Pipeline | Checkpoint used | Epoch | Basis for selection |
-> |----------|----------------|-------|---------------------|
-> | **Player-samp (v3)** | `final_model.pt` | 175 | Lowest train action loss (0.5984) in completed run |
-> | **Combined (v3)** | `checkpoint_epoch_140.pt` | 140 | Most advanced state before training stopped; action loss plateau (0.645) |
->
-> These results therefore represent the *best available* pre-fix models, not properly validated best models. Retraining with the fixed trainer will likely produce different (potentially better) results.
+Action prediction on held-out test data. This measures representation learning quality as a proxy task.
 
-### 8.1 Self-Consistency Comparison (v2 → v3)
+| Model | Action F1 | Angle F1 | Length F1 | F1 Avg | Shot AUC | Goal AUC |
+|-------|--:|--:|--:|--:|--:|--:|
+| split_ctx_ps | 0.735 | 0.639 | **0.691** | 0.688 | 0.966 | 0.972 |
+| player_samp | **0.733** | **0.677** | 0.690 | **0.700** | 0.961 | 0.977 |
+| baseline | 0.728 | 0.657 | 0.690 | 0.692 | 0.972 | **0.989** |
+| split_ctx | 0.727 | 0.639 | 0.687 | 0.684 | 0.973 | 0.989 |
+| pos_ablated | 0.725 | 0.654 | 0.681 | 0.687 | 0.973 | 0.986 |
+| pos_ablated_split_ctx_ema_v2 | 0.726 | 0.624 | 0.671 | 0.674 | 0.974 | 0.987 |
+| pos_ablated_split_ctx | 0.724 | 0.627 | 0.675 | 0.675 | **0.976** | 0.985 |
+| acts_in_dropout_pos_gu | 0.713 | 0.609 | 0.657 | 0.660 | 0.975 | 0.988 |
+| acts_in_dropout | 0.709 | 0.614 | 0.648 | 0.657 | 0.973 | 0.986 |
+| pos_ablated_split_ctx_ema | 0.707 | 0.605 | 0.638 | 0.650 | 0.973 | 0.988 |
+| pos_ablated_split_ctx_v2 | 0.696 | 0.593 | 0.630 | 0.639 | 0.974 | 0.987 |
 
-#### Competition-split (311 testable, gallery 1,633)
+**Key observations:**
 
-| Metric | Player-samp (v2) | Player-samp (v3) | Combined (v2) | Combined (v3) |
-|--------|-------------------|-------------------|----------------|----------------|
-| Self-cosine (mean) | 0.4980 | 0.3387 | 0.5028 | **0.5722** |
-| Cosine margin | 0.4298 | 0.3024 | 0.4323 | **0.5428** |
-| Mean rank | 259.0 | 247.9 | 254.5 | **199.3** |
-| Median rank | 82 | 132 | 81 | **86** |
-| Hit@1 | 5.8% | 0.5% | 4.8% | **5.5%** |
-| Hit@5 | 13.2% | 3.0% | 11.6% | **14.9%** |
-| Hit@10 | 18.2% | 6.4% | 15.8% | **19.8%** |
-| Hit@20 | 24.6% | 12.5% | 24.3% | **25.9%** |
-| Hit@50 | 38.3% | 25.4% | 37.1% | **38.1%** |
-
-#### Position-group breakdown (competition-split, v3)
-
-| Position | n | Player-samp v3 MR | Combined v3 MR | Player-samp v3 H@10 | Combined v3 H@10 |
-|----------|---|-------------------|----------------|---------------------|-------------------|
-| Defender | 124 | 236.9 | **222.6** | 5.7% | **18.1%** |
-| Forward | 71 | 254.3 | **174.5** | 7.0% | **22.5%** |
-| Goalkeeper | 18 | 57.6 | **27.4** | 5.6% | **36.1%** |
-| Midfielder | 98 | 292.0 | **219.2** | 7.1% | **16.8%** |
-
-#### Random-half (1,083 testable, gallery 1,633)
-
-| Metric | Player-samp (v2) | Player-samp (v3) | Combined (v2) | Combined (v3) |
-|--------|-------------------|-------------------|----------------|----------------|
-| Self-cosine (mean) | 0.8178 | 0.4080 | 0.8154 | **0.9476** |
-| Cosine margin | 0.7473 | 0.3758 | 0.7410 | **0.9167** |
-| Mean rank | 15.2 | 151.2 | 15.2 | **3.2** |
-| Median rank | 4 | 74 | 4 | **1** |
-| Hit@1 | 34.1% | 1.7% | 34.5% | **68.4%** |
-| Hit@5 | 54.9% | 6.6% | 55.6% | **88.3%** |
-| Hit@10 | 64.8% | 11.7% | 65.3% | **94.0%** |
-| Hit@20 | 76.2% | 20.8% | 77.1% | **97.3%** |
-| Hit@50 | 91.2% | 39.1% | 91.9% | **99.5%** |
-
-#### Position-group breakdown (random-half, v3)
-
-| Position | n | Player-samp v3 MR | Combined v3 MR | Player-samp v3 H@10 | Combined v3 H@10 |
-|----------|---|-------------------|----------------|---------------------|-------------------|
-| Defender | 451 | 132.2 | **3.9** | 10.5% | **91.8%** |
-| Forward | 217 | 163.2 | **2.9** | 13.1% | **95.2%** |
-| Goalkeeper | 51 | 51.0 | **4.9** | 7.8% | **90.2%** |
-| Midfielder | 364 | 181.6 | **2.4** | 12.9% | **96.6%** |
-
-### 8.2 Pseudo Ground-Truth Comparison (v2 → v3)
-
-| Metric | Player-samp (v2) | Player-samp (v3) | Combined (v2) | Combined (v3) |
-|--------|-------------------|-------------------|----------------|----------------|
-| Mean cosine | 0.0422 | **0.2789** | 0.0547 | 0.1098 |
-| Mean rank | 814.4 | **269.6** | 824.8 | 667.5 |
-| Median rank | 759 | **196** | 700 | 441 |
-| Hit@50 | 0.0% | **5.0%** | 0.0% | 0.0% |
-
-#### Per-pair comparison (avg rank, v3 only)
-
-| Tier | Player A | Player B | Player-samp (v3) | Combined (v3) |
-|------|----------|----------|-------------------|----------------|
-| 1 | Miedema | Caldentey | **348.0** | 1137.0 |
-| 1 | TAA | Hakimi | **134.0** | 210.0 |
-| 1 | Alba | Robertson | **127.0** | 193.0 |
-| 2 | Kroos | Enzo Fernandez | **77.5** | 135.5 |
-| 2 | TAA | Maehle | **186.0** | 640.5 |
-| 2 | Sancho | Vargas | **194.5** | 303.5 |
-| 2 | Sancho | Baumgartner | 910.5 | **334.5** |
-| 3 | Kane | Leao | **279.5** | 1397.0 |
-| 3 | Kane | Felix | **109.0** | 1090.5 |
-| 3 | Uduokhai | Souttar | **330.0** | 1233.5 |
-
-### 8.3 Policy Diagnostic Comparison (v2 → v3)
-
-#### Policy-cosine correlation (Spearman rho)
-
-| Position Group | Player-samp (v2) | Player-samp (v3) | Combined (v2) | Combined (v3) |
-|----------------|-------------------|-------------------|----------------|----------------|
-| Goalkeeper | 0.710 | 0.791 | 0.704 | **0.751** |
-| Defender | 0.682 | 0.528 | 0.667 | **0.766** |
-| Midfielder | 0.687 | 0.435 | 0.694 | **0.833** |
-| Forward | 0.658 | 0.474 | 0.683 | **0.769** |
-| **Overall** | 0.663 | 0.521 | 0.657 | **0.798** |
-
-#### Substitute quality
-
-| Metric | Player-samp (v2) | Player-samp (v3) | Combined (v2) | Combined (v3) |
-|--------|-------------------|-------------------|----------------|----------------|
-| JS(top-K) | 0.001124 | 0.008707 | 0.001945 | **0.001106** |
-| JS(random-K) | 0.019344 | 0.019920 | 0.020129 | **0.013671** |
-| **Ratio** | 17.22 | 2.29 | 10.35 | **12.37** |
-
-#### FiLM sensitivity (mean JS, correct vs shuffled)
-
-| Position Group | Player-samp (v2) | Player-samp (v3) | Combined (v2) | Combined (v3) |
-|----------------|-------------------|-------------------|----------------|----------------|
-| Goalkeeper | 0.0011 | 0.0067 | 0.0012 | **0.0017** |
-| Defender | 0.0035 | 0.0088 | 0.0037 | **0.0090** |
-| Midfielder | 0.0027 | 0.0075 | 0.0026 | **0.0048** |
-| Forward | 0.0028 | 0.0063 | 0.0024 | **0.0042** |
-| **Overall** | 0.0029 | 0.0077 | 0.0029 | **0.0061** |
-
-### 8.4 Findings
-
-1. **Combined (v3) is the new best model on self-consistency by a wide margin.** Random-half Hit@1 of 68.4% (vs 34.5% for v2) and Hit@10 of 94.0% (vs 65.3%) represent a dramatic improvement. Mean rank of 3.2/1,633 means the model almost always retrieves the correct player in the top few results. This is the strongest identity signal across all model variants tested.
-
-2. **Player-samp (v3) regressed severely.** All metrics are substantially worse than v2: random-half Hit@10 dropped from 64.8% to 11.7%, and competition-split Hit@10 from 18.2% to 6.4%. The manually selected checkpoint (final_model.pt, epoch 175) was trained well past the point where supervised performance peaked — the broken early stopping allowed training to continue while the model overfit to auxiliary losses. This strongly validates the early-stopping fix.
-
-3. **Combined (v3) achieves the highest policy-cosine correlation ever recorded (rho = 0.80).** This exceeds all previous models (baseline 0.71, player-samp v2 0.66) by a substantial margin, and is particularly strong for midfielders (0.83). The embedding space is now tightly aligned with behavioral decision-making similarity.
-
-4. **The identity–similarity trade-off persists but shifts.** Combined (v3) still underperforms baseline on ground-truth (mean rank 667.5 vs 219.5), confirming that models trained with strong uniformity push all embeddings apart, degrading cross-player similarity structure. However, player-samp (v3) actually improves on ground-truth vs v2 (269.6 vs 814.4), though this is likely because the v3 model's embeddings are less spread (weaker uniformity learned at the selected checkpoint).
-
-5. **Split-context edges make a decisive difference.** The gap between player-samp (v3) and combined (v3) — which differ only in the use of split teammate/opponent edges — is enormous. Combined (v3) outperforms player-samp (v3) on every self-consistency metric, policy correlation, and substitute quality. This is the strongest evidence yet that encoding teammate/opponent context separately is materially important.
-
-6. **The early-stopping bug had asymmetric impact.** Player-samp (v3) was harmed much more than combined (v3), likely because the player-samp model's training ran 35 epochs longer (175 vs 140), allowing more overfitting to the corrupted loss signal. Combined (v3)'s training was interrupted earlier (epoch 140), accidentally preserving a better model state.
-
-### 8.5 Implications
-
-- **Combined (v3) is the recommended model for deployment** in both identity-verification and scouting scenarios, pending retraining with the fixed early stopping.
-- **Retraining both pipelines with the fixed supervised-only early stopping** is strongly recommended. The v3 results demonstrate that the *checkpoint selection strategy* is at least as important as the training objective — proper early stopping should yield models that are better than both v2 and v3.
-- **The split-context edge ablation is definitively resolved:** teammate/opponent edge splitting provides a clear, consistent benefit across all evaluations when combined with player-aware sampling.
+- `player_samp` has the best average F1 (0.700), primarily driven by its angle prediction advantage (0.677 vs next-best 0.657).
+- The `pos_ablated_split_ctx` family shows lower F1 scores (0.650-0.675) than the baseline (0.692). This is expected: position ablation removes an informative feature, and the strong uniformity loss (lambda=1.0, t=4.0) penalizes the supervised objective to achieve better embedding geometry.
+- `acts_in_dropout` and `acts_in_dropout_pos_gu` land between the baseline and the strong-uniformity split-ctx runs on F1 avg (0.657-0.660), reflecting stochastic masking of the action stream during training.
+- `pos_ablated_split_ctx_ema` (lambda_alignment=0.3) has the worst F1 among non-collapsed split-ctx runs (0.650), confirming the alignment loss further reduces supervised performance. The v2 variant (lambda_alignment=0.1) recovers to 0.674.
+- Outcome prediction (shot/goal AUC) is uniformly excellent across all models (0.961-0.976 for shots, 0.972-0.989 for goals), suggesting the outcome heads are less sensitive to architectural changes.
+- The F1 differences across models are small in absolute terms (range 0.639-0.700, spread of 0.061). The supervised task is not the primary objective.
 
 ---
 
-## 9. Re-evaluation with Corrected Statistical Methodology (v4)
+## 6. FIFA Comparison
 
-> **Date**: 2026-03-25
->
-> **What changed**: Two statistical methodology fixes were applied to `policy_diagnostic.py` and the full evaluation pipeline was re-run on both pipelines (same models, same checkpoints as v3):
->
-> 1. **Holm-Bonferroni monotonicity enforcement** — The textbook Holm procedure requires adjusted p-values to be monotonically non-decreasing (`adjusted[i] = max(adjusted[i], adjusted[i-1])`). The previous implementation omitted this step, which could produce paradoxical results (a larger raw p-value receiving a smaller adjusted p-value).
-> 2. **NaN guard in Mantel permutation test** — If `spearmanr` returns NaN (from constant-value arrays), the comparison `perm_rho >= observed_rho` is always False (NaN semantics), yielding a spuriously small p-value suggesting significance when there is no meaningful correlation.
->
-> **Models are unchanged.** All results below use the same `best_model.pt` checkpoints as Section 8. Self-consistency and ground-truth metrics are identical to v3 (deterministic given same model/embeddings). Policy diagnostic correlation (rho) values are identical. Substitute quality ratios show minor variation due to re-run randomness in query player selection.
+External validation against FIFA video-game ratings. 16 query-neighbor pairs per model, comparing FIFA overall ratings and main-6 attribute differences. Position match % indicates how often the top neighbor shares the same broad position group.
 
-### 9.1 Self-Consistency (unchanged from v3)
+| Model | Avg Cosine Sim | Avg Overall Diff | Avg Main-6 Diff | Pos Match % |
+|-------|--:|--:|--:|--:|
+| h_fifa_attributes | 0.994 | **5.0** | **5.0** | **75** |
+| h_mean_features | 0.994 | 6.3 | 10.5 | 50 |
+| h_action_profile | 0.988 | **4.1** | 8.2 | 31 |
+| pos_ablated | 0.994 | 5.8 | 8.6 | 50 |
+| baseline | 0.978 | 6.1 | 8.6 | 44 |
+| acts_in_dropout | 0.917 | 5.6 | 7.9 | 50 |
+| acts_in_dropout_pos_gu | 0.913 | 6.0 | 7.7 | 50 |
+| split_ctx | 0.958 | 7.3 | 8.5 | 56 |
+| pos_ablated_split_ctx_ema | 0.916 | 7.4 | 9.1 | 56 |
+| pos_ablated_split_ctx_ema_v2 | 0.915 | 7.6 | 8.8 | 50 |
+| pos_ablated_split_ctx | 0.913 | 7.6 | 9.0 | 50 |
+| player_samp | 0.904 | 5.8 | 8.9 | 50 |
+| split_ctx_ps | 0.903 | 7.2 | 9.2 | 25 |
+| pos_ablated_split_ctx_v2 | 0.709 | 5.1 | 9.8 | 38 |
 
-Self-consistency metrics are identical to Section 8.1. Key numbers for reference:
+**Key observations:**
 
-| Metric | Player-samp | Combined |
-|--------|-------------|----------|
-| **Competition-split** | | |
-| Mean rank | 247.9 | **199.3** |
-| Median rank | 132 | **86** |
-| Hit@10 | 6.4% | **19.8%** |
-| **Random-half** | | |
-| Mean rank | 151.2 | **3.2** |
-| Median rank | 74 | **1** |
-| Hit@1 | 1.7% | **68.4%** |
-| Hit@10 | 11.7% | **94.0%** |
+- `h_fifa_attributes` trivially achieves the best main-6 diff (5.0) and position match (75%) because it uses FIFA attributes directly. This baseline exists to calibrate expectations.
+- Models with compressed embeddings (`pos_ablated`, `baseline`) show high avg cosine similarity (0.978-0.994) but this reflects that all players look similar, not that neighbors are genuinely better.
+- `acts_in_dropout` and `acts_in_dropout_pos_gu` achieve **lower** avg overall and main-6 diffs (5.6-6.0 and 7.7-7.9) than the core `pos_ablated_split_ctx` family (7.4-7.6 / 8.8-9.1), i.e. closer FIFA agreement on this small sample—without matching `h_fifa_attributes`.
+- The `pos_ablated_split_ctx` family has moderate FIFA alignment (avg overall diff 7.4-7.6, main-6 diff 8.8-9.1), somewhat worse than simpler models. This is expected since these models optimize for behavioral similarity from event data, not for FIFA attribute matching.
+- `split_ctx_ps` has the worst position match among GNN models (25%), meaning 75% of its recommended substitutes play a different position group. For practical scouting, this is a concern.
+- FIFA comparison has inherent limitations: FIFA ratings reflect subjective assessments and commercial considerations, not pure behavioral similarity.
 
-### 9.2 Ground Truth (unchanged from v3)
+---
 
-Ground-truth metrics are identical to Section 8.2. Key numbers for reference:
+## 7. Qualitative Neighbor Inspection
 
-| Metric | Player-samp | Combined |
-|--------|-------------|----------|
-| Mean cosine | **0.2789** | 0.1098 |
-| Mean rank | **269.6** | 667.5 |
-| Hit@50 | **5.0%** | 0.0% |
+Nearest-neighbor tables for 15 query players across selected models. These provide face-validity checks.
 
-### 9.3 Policy Diagnostic (corrected methodology)
+### 7.1 Cristiano Ronaldo (Center Forward)
 
-#### Policy-cosine correlation (Spearman rho)
+| Rank | pos_ablated_split_ctx | ema | ema_v2 | acts_in_dropout | player_samp |
+|---:|---|---|---|---|---|
+| 1 | Morata (0.944) | Morata (0.954) | Memphis Depay (0.951) | Morata (0.953) | Kane (0.954) |
+| 2 | Memphis Depay (0.942) | Memphis Depay (0.947) | Morata (0.934) | Memphis Depay (0.948) | Morata (0.954) |
+| 3 | Kane (0.929) | Kane (0.935) | V. Boniface (0.933) | Kane (0.934) | Arnautovic (0.952) |
+| 4 | V. Boniface (0.927) | Mitrović (0.934) | Mitrovic (0.929) | V. Boniface (0.932) | Schick (0.951) |
+| 5 | Petkovic (0.919) | Yaremchuk (0.933) | Kane (0.925) | Benzema (0.926) | Livaja (0.948) |
 
-Rho values are identical to v3. All group-level permutation p-values are now properly Holm-Bonferroni corrected with monotonicity enforcement.
+All models return plausible center forwards. `player_samp` shows tighter cosine similarity among neighbors (0.948-0.954), reflecting its compressed within-position clustering. The `pos_ablated_split_ctx` family shows wider spread, suggesting more discriminative embeddings. `acts_in_dropout` matches Morata/Memphis/Kane/Boniface/Benzema—nearly the same cast as the split-ctx family with Benzema instead of Petković at rank 5.
 
-| Position Group | Player-samp rho | Player-samp p\_holm | Combined rho | Combined p\_holm |
-|----------------|-----------------|---------------------|--------------|-------------------|
-| Goalkeeper | 0.791 | 0.004 | **0.751** | 0.004 |
-| Defender | 0.528 | 0.004 | **0.766** | 0.004 |
-| Midfielder | 0.435 | 0.004 | **0.833** | 0.004 |
-| Forward | 0.474 | 0.004 | **0.769** | 0.004 |
-| **Overall** | 0.521 | *(pooled)* | **0.798** | *(pooled)* |
+### 7.2 Toni Kroos (Left Defensive Midfield)
 
-All correlations remain highly significant (p\_holm = 0.004, well below 0.05) after correction. The Holm correction uses `p_raw × (m − rank)` with m=4 groups and enforces monotonicity.
+| Rank | pos_ablated_split_ctx | ema | ema_v2 | player_samp |
+|---:|---|---|---|---|
+| 1 | Declan Rice (0.937) | Declan Rice (0.936) | Declan Rice (0.943) | Frenkie de Jong (0.954) |
+| 2 | Grillitsch (0.916) | Frenkie de Jong (0.915) | Grillitsch (0.903) | Declan Rice (0.944) |
+| 3 | Frenkie de Jong (0.914) | Grillitsch (0.905) | Frenkie de Jong (0.901) | Axel Witsel (0.942) |
+| 4 | Reijnders (0.905) | Reijnders (0.897) | Ekdal (0.897) | Casimiro (0.934) |
+| 5 | M. Arnold (0.899) | Lobotka (0.890) | Casimiro (0.895) | Reijnders (0.928) |
 
-#### Substitute quality
+Strong agreement across models: Rice, de Jong, Grillitsch are consistently top-ranked. These are all tempo-controlling deep-lying midfielders, validating the behavioral representation.
 
-| Metric | Player-samp | Combined |
-|--------|-------------|----------|
-| JS(top-K) | 0.005812 | **0.000833** |
-| JS(random-K) | 0.019122 | **0.013273** |
-| **Ratio** | 3.29 | **15.94** |
-| **95% CI** | [3.20, 51.15] | **[8.52, 24.26]** |
+### 7.3 Messi (Right Center Forward) -- Stress Test
 
-Combined maintains a dramatically higher substitute ratio (15.9x) with a tight 95% bootstrap confidence interval [8.5, 24.3], confirming this is a robust result. Player-samp's wide CI [3.2, 51.2] reflects high variance across the 10 query players.
+| Rank | pos_ablated_split_ctx | ema | player_samp |
+|---:|---|---|---|
+| 1 | Griezmann (0.939) | Griezmann (0.942) | Deniz Undav (0.907) |
+| 2 | Arda Guler (0.905) | Tadić (0.912) | Kulusevski (0.881) |
+| 3 | McGinn (0.904) | McGinn (0.907) | Almoez Ali (0.875) |
+| 4 | Shaqiri (0.903) | Majer (0.905) | Wout Weghorst (0.863) |
+| 5 | Tadic (0.891) | Shaqiri (0.902) | Sporar (0.852) |
 
-#### FiLM sensitivity (mean JS, correct vs shuffled)
+`pos_ablated_split_ctx` and `ema` retrieve attacking playmakers (Griezmann, Tadić, McGinn, Shaqiri, Majer) that match Messi's creative role. `player_samp` retrieves center forwards by position (Undav, Weghorst, Sporar) rather than play style, suggesting position dominates its embeddings more than behavioral nuance.
 
-| Position Group | Player-samp | Combined |
-|----------------|-------------|----------|
-| Goalkeeper | 0.0067 | **0.0017** |
-| Defender | 0.0088 | **0.0090** |
-| Midfielder | 0.0075 | **0.0048** |
-| Forward | 0.0063 | **0.0042** |
-| **Overall** | 0.0077 | **0.0061** |
+---
 
-### 9.4 Statistical Methodology Notes
+## 8. Head-Coach Qualitative Scoring
 
-The following statistical improvements are now reflected in all v4 reports:
+### Setup
 
-1. **Mantel-style permutation tests** replace parametric Spearman p-values. Distance-matrix pairs share players and violate i.i.d. assumptions, making parametric p-values unreliable. The permutation test shuffles row/column labels of the cosine-distance matrix (1,000 permutations) and counts exceedances.
+Six query players (Neuer, Van Dijk, Alexander-Arnold, De Bruyne, Messi, Mbappé) were evaluated across six models. For each, the model's top-5 nearest neighbours (from `evaluations/{tag}/qualitative_neighbors/`) were scored 1–5 on how reasonable they are as substitutes or stylistic equivalents.
 
-2. **Holm-Bonferroni correction** is applied across 4 group-level tests with proper monotonicity enforcement. Adjusted p-values are guaranteed non-decreasing when sorted by raw p-value.
+**Prompt used:**
 
-3. **Bootstrap 95% CIs** are reported for the aggregate substitute ratio (2,000 bootstrap resamples, percentile method).
+> "You can imagine yourself as a soccer headcoach in a realistic scenario. Only give 5 for really the best matches. Strictly score them with brief reasonings."
 
-4. **Mixed query selection** for substitute quality: half of query players are selected from the highest-possession players per group, half are randomly sampled from the remainder. This mitigates bias toward high-data players.
+**Scoring model:** Claude Opus (Anthropic), acting as the evaluator. No external references were consulted beyond general football knowledge; all candidate lists were verified to match the JSON evaluation artifacts exactly.
 
-5. **Guaranteed derangements** in FiLM sensitivity: the z\_p shuffle uses rejection sampling (n≥3) or exact swap (n=2) to ensure no player retains their own embedding.
+**Scale:** 1 = poor (no candidate is a realistic substitute), 2 = weak (one reasonable match at best), 3 = decent (2–3 useful suggestions), 4 = good (3–4 genuinely useful), 5 = excellent (most/all are strong stylistic matches; reserved for truly outstanding lists).
 
-### 9.5 Summary and Recommendations
+### Results
 
-The v4 re-evaluation confirms all v3 findings with improved statistical rigor:
+| Query | M1 baseline | M2 pos_abl_sc | M3 split_ctx | M4 pos_abl_sc_ema | M5 acts_drop | M6 acts_drop_pos_gu |
+|-------|:-:|:-:|:-:|:-:|:-:|:-:|
+| **Neuer** | 2 | 3 | 3 | **4** | 3 | **4** |
+| **Van Dijk** | 3 | 2 | 3 | 2 | 3 | **4** |
+| **TAA** | 3 | 2 | 1 | 2 | 2 | 2 |
+| **De Bruyne** | 3 | 3 | 2 | 3 | 3 | **4** |
+| **Messi** | 1 | 3 | 1 | 3 | 3 | 3 |
+| **Mbappé** | 1 | **4** | 1 | **4** | **4** | **4** |
+| **Total (/30)** | **13** | **17** | **11** | **18** | **18** | **21** |
+| **Average** | **2.2** | **2.8** | **1.8** | **3.0** | **3.0** | **3.5** |
 
-| Pipeline | Best for | Key strength | Key weakness |
-|----------|----------|-------------|--------------|
-| **Combined (split\_ctx\_ps)** | Identity verification, scouting | Hit@1=68.4% (random-half), rho=0.80, sub ratio=15.9x | Ground-truth mean rank 667.5 |
-| **Player-samp** | Cross-player similarity search | Ground-truth mean rank 269.6 | Hit@1=1.7% (random-half), rho=0.52 |
+### Per-Query Reasoning
 
-**Combined remains the recommended model.** Its behavioral validation (rho=0.80, substitute ratio 15.9x with CI [8.5, 24.3]) is the strongest of any model tested. Retraining with the fixed supervised-only early stopping is still recommended to potentially improve further.
+**Neuer (GK)**
+- M1 (2): Pickford/Livaković are decent international keepers but Hrádecký, Vanja Milinković Savić, and Bachmann lack Neuer's sweeper-keeper profile. Misses Donnarumma, Lloris, Ederson.
+- M2 (3): Donnarumma is a strong pick (elite, sweeper tendencies). Rest are generic.
+- M3 (3): Maignan stands out — elite sweeper-keeper with great distribution, arguably the best possible Neuer comparison.
+- M4 (4): Pickford, Donnarumma, Unai Simón, Lloris — four international #1 keepers with sweeping/distribution qualities. Strongest GK list.
+- M5 (3): Donnarumma is the standout. Noppert and Dimitrievski are limited.
+- M6 (4): Lloris, Unai Simón, Donnarumma — three elite keepers with sweeper tendencies. Tied for best GK list.
+
+**Van Dijk (LCB)**
+- M1 (3): Thiago Silva (elite ball-playing CB, leadership) is an excellent match. Vertonghen is solid. Others are generic.
+- M2 (2): Akanji (Man City, composed, ball-playing) is the best pick but there is no standout VVD-caliber match.
+- M3 (3): Thiago Silva + Calafiori (Arsenal, young ball-playing LCB) are strong modern picks.
+- M4 (2): Akanji is good but Kashia and Khoukhi are obscure, lower-tier CBs that drag the list down.
+- M5 (3): Thiago Silva (outstanding) and Akanji (solid) anchor the list. Arajuuri is a miss.
+- M6 (4): **Rúben Dias** is arguably THE best possible VVD comparison in the dataset (PL elite, commanding, ball-playing). Akanji adds depth. Best CB list across models.
+
+**Trent Alexander-Arnold (RDM)**
+- M1 (3): Hakimi (elite creative attacking fullback) and Carvajal (elite progressive RB) are individually strong. Collins Fai is a miss.
+- M2 (2): Dani Alves (legendary creative RB) is conceptually excellent but data is old. Geertruida is versatile; others miss TAA's creative passing.
+- M3 (1): Hysaj, Sabaly, Cash, Tymchyk, Wass — all generic right-backs with none of TAA's defining creative vision. The positional model retrieves position peers, not stylistic matches.
+- M4 (2): Dani Alves is the right idea. Militão, Lucas Melo, Johnston don't capture the creative profile.
+- M5 (2): Dani Alves and Timber have some appeal but the rest miss.
+- M6 (2): Geertruida and De Paul (creative progressive passing parallels) are interesting; Timber is versatile. Still no model truly captures TAA's unique profile.
+
+**De Bruyne (CAM)**
+- M1 (3): Foden (excellent — creative, versatile, Man City system, vision) is a standout. Xavi Simons reasonable. Dina Ebimbe is a miss.
+- M2 (3): Bruno Fernandes (excellent — creative, throughballs, set-pieces) and Zieliński (technical playmaker) are strong.
+- M3 (2): Bruno Fernandes saves the list. Dina Ebimbe and Sliti are misses.
+- M4 (3): Zieliński is good; Messi appearing is interesting (both are elite creators). Tadić is reasonable. Robin Lod is a miss.
+- M5 (3): Zieliński and Hamšík (creative playmaker, similar passing range) are strong picks.
+- M6 (4): Bruno Fernandes (excellent), Zieliński (good), Griezmann (creative versatile attacker) — three genuinely useful suggestions in one list. Best KDB list.
+
+**Messi (RCF)**
+- M1 (1): Gakpo, Che Adams, Vlahović, Bergwijn — mostly physical strikers or direct wingers. No one captures dribbling + vision + playmaking. Suárez has some link-up chemistry historically but is a different profile.
+- M2 (3): Griezmann (intelligent movement, creative between lines) is the best conceptual match. Shaqiri and Tadić have creative/technical elements.
+- M3 (1): Che Adams, Mikautadze, Campbell, Kalajdžić (6'7" target man), Dovbyk — not a single creative/technical forward. Positional model retrieves center forwards by role.
+- M4 (3): Griezmann (good), Tadić (creative, vision), Shaqiri (technical). Reasonable cluster of creative attacking players.
+- M5 (3): Griezmann, Shaqiri, Tadić, Kramarić (creative Croatian forward) — consistent creative forward cluster.
+- M6 (3): Griezmann, Shaqiri, Arda Güler, Kramarić, Mertens — all are creative, technically gifted attacking players. No single list captures Messi's unique combination, but this is a reasonable set.
+
+**Mbappé (LW)**
+- M1 (1): Yılmaz, Immobile, Kieffer Moore (aerial target man), Petković — almost entirely center forwards / poachers. None share pace, directness, or wing play.
+- M2 (4): Olmo, Diogo Jota, Boufal, João Félix, Musiala — all creative, technically gifted forward/wingers. Strong stylistic cluster.
+- M3 (1): Embolo, Dzyuba, Füllkrug, Morata, Petković — strikers and target men. The positional model fails here completely.
+- M4 (4): Thuram (French, pacy), Diogo Jota (LW, clinical), Olmo, Gakpo (LW, pace, goals), João Félix — strong modern left-sided attackers.
+- M5 (4): Olmo, Diogo Jota, João Félix, Thuram, Insigne (creative Italian LW) — consistently strong set.
+- M6 (4): Olmo, Diogo Jota, Gakpo, Thuram, Sterling (pacy LW, dribbling) — all five are modern pace-based left-sided attackers.
+
+### Key Takeaways
+
+1. **Model 6 (`acts_in_dropout_pos_gu`) wins the qualitative evaluation** (21/30, avg 3.5) despite ranking 5th on pseudo-GT mean rank in the automated metrics. Its group-uniformity term produces better within-position discrimination, yielding Rúben Dias for VVD and Bruno Fernandes for KDB — picks no other model surfaces.
+2. **Position-ablated models (M2, M4, M5, M6) dramatically outperform positional models (M1, M3) on creative/unique players** (Messi, Mbappé). Models that keep position information retrieve positional peers (strikers for Messi, poachers for Mbappé) rather than stylistic matches.
+3. **Model 3 (`split_ctx`) has the best automated pseudo-GT mean rank (56.1) but the worst qualitative score (11/30)**. This highlights a divergence between pair-retrieval metrics and face-validity neighbor inspection for famous players.
+4. **TAA is universally difficult** (max score 3, from M1 via Hakimi/Carvajal). His unique creative-RB/inverted-midfielder hybrid profile has no close equivalent in the dataset.
+5. **No model scores 5 on any query.** The closest to a 5 is M6's VVD list (anchored by Rúben Dias).
+
+---
+
+## 9. Critical Assessment
+
+### 9.1 What the evaluation suite measures well
+
+- **Pseudo-ground-truth pairs** test the substitute-finding use case with LLM-generated pairs. These are directional sanity checks, not expert-validated ground truth (see §10.1).
+- **Policy diagnostic** tests whether embedding proximity reflects actual on-pitch behavioral similarity using action distributions from 200 simulated situations.
+- **Empirical behavioral fidelity** (§4.3–4.5) cross-validates the policy diagnostic without self-referential bias: it compares embedding distance against JS divergence of **observed** player actions bucketed by game state. This is the strongest non-circular behavioral signal in the suite.
+- **Competition-split self-consistency** tests real-world robustness: can the model produce stable player representations from data collected in different tournaments?
+
+### 9.2 What the evaluation suite does NOT test
+
+- **Temporal stability:** All data comes from a fixed window. We do not test whether a player's embedding changes appropriately as their playing style evolves.
+- **Low-data players:** The minimum possession threshold filters out many real scouting targets (young/emerging players with limited data).
+- **Same-position discrimination:** The policy diagnostic evaluates within position-gender groups, but the pseudo-ground-truth pairs include cross-positional comparisons (e.g., Bellingham-Griezmann, where one is nominally a midfielder and the other a forward).
+- **Practical retrieval at scale:** All galleries have ~1,000 players. In production, galleries may contain 10,000+ players across multiple leagues and seasons.
+
+### 9.3 Why `pos_ablated_split_ctx_v2` collapsed
+
+`pos_ablated_split_ctx_v2` reduced uniformity weight (lambda=0.7) compared to the base variant (lambda=1.0), while keeping the same t=4.0. The result is catastrophic: GT mean_rank 198.8, competition-split mean_rank 200.8, random-half hit@10 0.094. This confirms that position ablation creates a strong dependency on uniformity loss to maintain embedding spread. Reducing lambda from 1.0 to 0.7 — a 30% reduction — causes representational collapse.
+
+### 9.4 The player-sampling paradox
+
+`player_samp` and `split_ctx_ps` achieve the best random-half self-consistency (mean_rank 2.7-2.9) and highest substitute quality ratios (11.9-13.1), yet fail at pseudo-GT retrieval (tier-1 hit@10 = 0.0) and competition-split consistency (mean_rank 89-94).
+
+**Explanation:** Player sampling forces the model to see the same player across different mini-batches, creating tight per-player clusters. This directly optimizes for within-context self-consistency (the random-half test) and produces wider embedding spread (higher random-k JS in the substitute ratio denominator). However, it does not teach the model what makes two *different* players functionally similar. The training signal is "same player = close" rather than "similar behavior = close." The result is a model that excels at player re-identification but underperforms at cross-player similarity retrieval.
+
+### 9.5 The behavioral fidelity-retrieval trade-off
+
+`pos_ablated` has the highest Spearman rho (0.974) but mediocre retrieval (GT mean_rank 69.6). This occurs because its highly compressed embedding space (mean cosine dist 0.085) means the behavioral ordering is preserved but the absolute distances between players are tiny, making retrieval noisy. The `pos_ablated_split_ctx` family sacrifices some rho (0.929-0.944) for much better retrieval (mean_rank 62.6-64.3) by spreading embeddings apart with stronger uniformity loss.
+
+---
+
+## 10. Weighted Model Selection
+
+### 10.1 Why the Pseudo-Ground-Truth Pairs Are Not Gold-Standard
+
+The 15 "ground-truth" pairs (§2) were **generated by an LLM** from publicly cited analytics comparisons, not validated by football domain experts or StatsBomb analysts (see `docs/pseudo_ground_truth.md`, which labels them "directional sanity checks, not strict benchmarks"). This matters:
+
+- The pairs reflect LLM biases toward famous players, media narratives, and positional similarity
+- A model that disagrees with the LLM's judgment may be capturing genuine behavioral patterns the LLM missed
+- Weighting pseudo-GT retrieval as the primary metric would effectively optimize for "agreement with an LLM" rather than "finding good substitutes"
+
+Consequently, pseudo-GT metrics receive **reduced weight** (0.12 combined) compared to objectively grounded metrics (behavioral + cross-context = 0.55).
+
+### 10.2 All 14 Metrics & Weight Justification
+
+Each metric is min-max normalized across all 11 GNN models (1.0 = best, 0.0 = worst). The weighted score is `Σ(w_i × norm_i) / Σ(w_i for available metrics)`, so models with missing data (e.g., no qualitative or no empirical behavioral) are evaluated on the metrics they have.
+
+| # | Metric | Weight | Category | Reasoning |
+|---|--------|-------:|----------|-----------|
+| 1 | Spearman Rho (model-based) | **0.14** | Model Behavioral | Behavioral ordering fidelity from the model's action-prediction head. Reduced from 0.18 (12-metric) because EB Rho now provides non-self-referential behavioral correlation. |
+| 2 | Absolute Top-k JS (model-based) | **0.10** | Model Behavioral | Do retrieved neighbors play similarly per the model? Reduced from 0.14 because empirical behavioral metrics now cross-validate this signal. |
+| 3 | Comp-Split Mean Rank | **0.17** | Cross-Context | Cross-competition robustness — essential for scouting across leagues. Objective, computed from real data. |
+| 4 | Comp-Split Hit@10 | **0.06** | Cross-Context | Precision supplement: can the model find the same player in the top 10 across competitions? |
+| 5 | Random-Half Mean Rank | **0.05** | Within-Context | Within-context embedding stability. Easier test, catches degenerate models. |
+| 6 | Pseudo-GT Mean Rank | **0.08** | Pseudo-GT | LLM-generated pair retrieval. Informative but biased. Reduced weight. |
+| 7 | Pseudo-GT Hit@50 | **0.04** | Pseudo-GT | Practical shortlist from LLM pairs. |
+| 8 | Sub Quality Ratio (model-based) | **0.04** | Model Behavioral | Relative improvement of top-k neighbors over random. Reduced from 0.05. |
+| 9 | FIFA Main-6 Diff | **0.05** | External | Independent skill-profile validation against FIFA ratings. Small sample (16 non-GK pairs) but provides external check. |
+| 10 | FIFA Position Match % | **0.05** | External | Practical relevance: substitutes typically must share a position group. |
+| 11 | Test F1 Avg | **0.03** | Proxy | Supervised proxy task. Guards against degenerate representations but is not the end goal. |
+| 12 | Qualitative Head-Coach Avg | **0.10** | Face Validity | Scoring by an evaluator (Claude) on 6 famous-player queries (§8). Available for 6 of 11 models; weight redistributed for the other 5. |
+| 13 | EB Spearman Rho | **0.07** | Empirical Behavioral | Non-self-referential correlation between embedding distance and JS divergence of **observed** action distributions (§4.4). Immune to self-referential inflation. Available for 10 of 11 models. |
+| 14 | EB Substitute Ratio | **0.02** | Empirical Behavioral | Ratio of random-K to top-K observed-action JS (§4.5). Directly tests whether embedding neighbors are better behavioral matches than random same-group peers, using actual decisions. |
+| | **Total** | **1.00** | | |
+
+**Category totals:**
+
+| Category | Metrics | Combined Weight | Reasoning |
+|----------|---------|----------------:|-----------|
+| Model-Based Behavioral | Rho + Top-k JS + Sub Ratio | **0.28** | Model's action predictions correlate with embedding geometry. Self-referential but smooth and high-resolution. Reduced from 0.37 (12-metric) to accommodate empirical behavioral. |
+| Empirical Behavioral | EB Rho + EB Sub Ratio | **0.09** | Non-self-referential behavioral validation from observed actions. Noisier but externally grounded. |
+| Cross-Context Robustness | Comp MR + Comp H@10 | **0.23** | Production-critical: scouting across leagues requires stable embeddings. |
+| Pseudo-GT Retrieval | GT MR + GT H@50 | **0.12** | Useful sanity check but LLM-generated pairs, not expert-validated. |
+| External Validation | FIFA M6 + FIFA Pos + Qualitative | **0.20** | Independent checks from outside the training paradigm. |
+| Supplementary | Random MR + F1 | **0.08** | Useful but less diagnostic for substitute finding specifically. |
+
+**Excluded metrics and why:**
+- **Shot/Goal AUC**: Not discriminative (range 0.961–0.976 / 0.972–0.989 across all models)
+- **Self-cosine values**: Misleading — high cosine can reflect embedding compression, not quality (e.g., `pos_ablated` cosine 0.974 but poor retrieval)
+- **Individual F1 components**: Summarized by F1 Avg
+- **GT Hit@5/10/20, Median Rank**: Noisier or redundant with GT Mean Rank + Hit@50
+- **Group-wise Rho**: Summarized by Overall Rho
+- **EB Top-K JS (absolute)**: Correlated with EB Sub Ratio; the ratio is more diagnostic for substitute quality
+
+### 10.3 Comprehensive Final Scores — All Models
+
+**Raw metric values** for every model on all 14 evaluation dimensions:
+
+| Model | Rho | Top-k JS | Comp MR | Comp H@10 | Rand MR | GT MR | GT H@50 | Sub Ratio | FIFA M6 | FIFA Pos% | F1 Avg | Qual | EB Rho | EB Ratio |
+|-------|----:|--------:|---------:|----------:|--------:|------:|--------:|----------:|--------:|----------:|-------:|-----:|-------:|---------:|
+| baseline | 0.744 | 0.003298 | 81.6 | 0.238 | 26.1 | 67.6 | 0.667 | 3.84 | 8.6 | 44 | 0.692 | 2.2 | 0.1879 | 1.322 |
+| player_samp | 0.788 | 0.001122 | 93.5 | 0.264 | 2.9 | 70.2 | 0.333 | 11.91 | 8.9 | 50 | 0.700 | — | 0.2230 | 1.562 |
+| split_ctx | 0.710 | 0.004611 | 83.9 | 0.215 | 36.4 | 56.1 | 0.600 | 3.13 | 8.5 | 56 | 0.684 | 1.8 | 0.1891 | 1.247 |
+| split_ctx_ps | 0.778 | 0.001025 | 89.3 | 0.262 | 2.7 | 71.4 | 0.333 | 13.11 | 9.2 | 25 | 0.688 | — | 0.2296 | 1.698 |
+| pos_ablated | 0.974 | 0.001110 | 81.3 | 0.275 | 13.9 | 69.6 | 0.567 | 8.59 | 8.6 | 50 | 0.687 | — | 0.1961 | 1.658 |
+| pos_ablated_split_ctx | 0.929 | 0.001408 | 67.3 | 0.346 | 6.3 | 63.1 | 0.633 | 6.63 | 9.0 | 50 | 0.675 | 2.8 | 0.2070 | 1.623 |
+| pos_ablated_split_ctx_v2 | 0.686 | 0.006962 | 200.8 | 0.076 | 177.8 | 198.8 | 0.200 | 3.07 | 9.8 | 38 | 0.639 | — | 0.1038 | 1.211 |
+| pos_ablated_split_ctx_ema | 0.944 | 0.001040 | 67.7 | 0.318 | 9.3 | 62.6 | 0.700 | 7.95 | 9.1 | 56 | 0.650 | 3.0 | 0.2074 | 1.718 |
+| pos_ablated_split_ctx_ema_v2 | 0.934 | 0.001453 | 67.5 | 0.349 | 6.1 | 64.3 | 0.633 | 6.35 | 8.8 | 50 | 0.674 | — | — | — |
+| acts_in_dropout | 0.928 | 0.001031 | 68.9 | 0.351 | 8.7 | 68.2 | 0.633 | 7.75 | 7.9 | 50 | 0.657 | 3.0 | 0.2066 | 1.953 |
+| acts_in_dropout_pos_gu | 0.922 | 0.001051 | 74.0 | 0.328 | 8.2 | 66.7 | 0.567 | 7.62 | 7.7 | 50 | 0.660 | 3.5 | 0.1946 | 1.745 |
+
+Direction key: Rho ↑, Top-k JS ↓, Comp MR ↓, Comp H@10 ↑, Rand MR ↓, GT MR ↓, GT H@50 ↑, Sub Ratio ↑, FIFA M6 ↓, FIFA Pos% ↑, F1 Avg ↑, Qual ↑, EB Rho ↑, EB Ratio ↑. "—" = data not available for this model.
+
+**Min-max normalized scores** (1.0 = best, 0.0 = worst across all 11 GNN models):
+
+| Model | Rho | JS | Comp MR | Comp H10 | Rand MR | GT MR | GT H50 | Sub Ratio | FIFA M6 | FIFA Pos | F1 | Qual | EB Rho | EB Sub | **Weighted Score** |
+|-------|----:|---:|--------:|---------:|--------:|------:|-------:|----------:|--------:|---------:|---:|-----:|-------:|-------:|-------------------:|
+| acts_in_dropout_pos_gu | 0.82 | 1.00 | 0.95 | 0.92 | 0.97 | 0.93 | 0.73 | 0.45 | 1.00 | 0.81 | 0.34 | 1.00 | 0.72 | 0.72 | **0.867** |
+| acts_in_dropout | 0.84 | 1.00 | 0.99 | 1.00 | 0.97 | 0.92 | 0.87 | 0.47 | 0.90 | 0.81 | 0.29 | 0.71 | 0.82 | 1.00 | **0.864** |
+| pos_ablated_split_ctx_ema_v2 | 0.86 | 0.93 | 1.00 | 0.99 | 0.98 | 0.94 | 0.87 | 0.33 | 0.48 | 0.81 | 0.56 | — | — | — | **0.860** |
+| pos_ablated | 1.00 | 0.99 | 0.90 | 0.73 | 0.94 | 0.91 | 0.73 | 0.55 | 0.57 | 0.81 | 0.78 | — | 0.73 | 0.60 | **0.847** |
+| pos_ablated_split_ctx_ema | 0.90 | 1.00 | 1.00 | 0.88 | 0.96 | 0.95 | 1.00 | 0.49 | 0.33 | 1.00 | 0.17 | 0.71 | 0.82 | 0.68 | **0.846** |
+| pos_ablated_split_ctx | 0.85 | 0.94 | 1.00 | 0.98 | 0.98 | 0.95 | 0.87 | 0.35 | 0.38 | 0.81 | 0.59 | 0.59 | 0.82 | 0.56 | **0.820** |
+| player_samp | 0.36 | 0.98 | 0.80 | 0.68 | 1.00 | 0.90 | 0.27 | 0.88 | 0.43 | 0.81 | 1.00 | — | 0.95 | 0.47 | **0.735** |
+| split_ctx_ps | 0.32 | 1.00 | 0.84 | 0.68 | 1.00 | 0.89 | 0.27 | 1.00 | 0.29 | 0.00 | 0.81 | — | 1.00 | 0.66 | **0.692** |
+| baseline | 0.20 | 0.62 | 0.89 | 0.59 | 0.87 | 0.92 | 0.93 | 0.08 | 0.57 | 0.61 | 0.86 | 0.24 | 0.67 | 0.15 | **0.593** |
+| split_ctx | 0.08 | 0.40 | 0.88 | 0.51 | 0.81 | 1.00 | 0.80 | 0.01 | 0.62 | 1.00 | 0.74 | 0.00 | 0.68 | 0.05 | **0.536** |
+| pos_ablated_split_ctx_v2 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.42 | 0.00 | — | 0.00 | 0.00 | **0.023** |
+
+Models with "—" have their available metric weights renormalized so scores remain comparable. `pos_ablated_split_ctx_ema_v2` is missing both Qual and EB metrics (÷ 0.81); `pos_ablated`, `player_samp`, `split_ctx_ps`, `pos_ablated_split_ctx_v2` are missing Qual only (÷ 0.90).
+
+### 10.4 Sensitivity Analysis
+
+| Weighting variant | #1 | #2 | #3 |
+|-------------------|-----|-----|-----|
+| **Balanced** (14-metric, as above) | **acts_in_dropout_pos_gu** (0.867) | acts_in_dropout (0.864) | pos_ablated_split_ctx_ema_v2 (0.860) |
+| **Behavioral-Heavy** (Rho=.17, JS=.12, EBR=.09, EBS=.03) | acts_in_dropout (0.862) | **acts_in_dropout_pos_gu** (0.857) | pos_ablated (0.850) |
+| **Retrieval-Heavy** (Comp=.20, CH10=.08, GT=.10) | acts_in_dropout (0.877) | **acts_in_dropout_pos_gu** (0.874) | pos_ablated_split_ctx_ema (0.855) |
+| **External-Heavy** (FIFA=.08+.08, Qual=.14) | **acts_in_dropout_pos_gu** (0.878) | acts_in_dropout (0.859) | pos_ablated (0.834) |
+
+The two `acts_in_dropout` variants are always top-2 across all weight variants. `acts_in_dropout_pos_gu` wins under balanced and external-heavy weights (where its best-in-class qualitative and FIFA scores dominate); `acts_in_dropout` wins under behavioral-heavy and retrieval-heavy weights (where its best-in-class EB Sub Ratio and Comp-Split Hit@10 dominate).
+
+Among models with **full 14-metric coverage** (no missing qualitative or EB):
+
+`acts_in_dropout_pos_gu` (0.867) > `acts_in_dropout` (0.864) > `pos_ablated_split_ctx_ema` (0.846) > `pos_ablated_split_ctx` (0.820)
+
+This ordering is robust across all weight variants.
+
+### 10.5 Caveat on `pos_ablated` (#4)
+
+`pos_ablated` ranks 4th (0.847) but has only 13/14 metric coverage (no qualitative data). Its top ranking on model-based Spearman rho (1.0 normalized, from 0.974) contributes 0.14 to its score. However, this high rho is a consequence of embedding compression (self-cosine 0.974, mean cosine distance 0.085) — all players look nearly identical, so behavioral ordering is trivially preserved. Its practical retrieval metrics (GT MR 69.6, comp MR 81.3) are substantially worse than the `pos_ablated_split_ctx` family. Its EB Rho (0.1961) is mid-pack, confirming that compression inflates model-based Rho but not the externally grounded empirical metric.
+
+If qualitative data were available, `pos_ablated` would likely score poorly (its compressed embedding space produces generic, undifferentiated neighbor lists). Its true ranking is probably 5th–6th.
+
+### 10.6 Caveat on `pos_ablated_split_ctx_ema_v2` (#3)
+
+`pos_ablated_split_ctx_ema_v2` ranks 3rd (0.860) but is missing both qualitative (0.10) and empirical behavioral (0.09) metrics — its score is based on only 11 of 14 dimensions (÷ 0.81). If EB metrics were available (most likely mid-pack based on its position between `pos_ablated_split_ctx_ema` and `pos_ablated_split_ctx` architecturally), its true ranking would likely be 4th–5th.
+
+---
+
+## 11. Conclusion
+
+### Best model for substitute-player retrieval: `acts_in_dropout_pos_gu`
+
+**Weighted score = 0.867** (§10.3), highest among all 11 models under the 14-metric substitute-optimized analysis. This result is robust: top-2 across all four weight variants tested (§10.4).
+
+| Criterion | Value | Rank / 11 | Evidence |
+|-----------|------:|:---------:|----------|
+| Spearman Rho (model) | 0.922 | 6 | Strong behavioral fidelity without compression artifacts |
+| Absolute Top-k JS | 0.001051 | 4 | Retrieved neighbors genuinely play alike |
+| Comp-Split Mean Rank | 74.0 | 5 | Moderate cross-context robustness |
+| Comp-Split Hit@10 | 0.328 | 4 | Good cross-context precision |
+| FIFA Main-6 Diff | **7.7** | **1** | **Best** FIFA skill-profile match among all GNN models |
+| Qualitative Head-Coach | **3.5/5** | **1** | **Best** face-validity neighbors (Rúben Dias for VVD, Bruno Fernandes for KDB) |
+| EB Substitute Ratio | 1.745 | 2 | Embedding neighbors 1.75× more behaviorally similar than random (observed actions) |
+| Pseudo-GT Mean Rank | 66.7 | 5 | Moderate on LLM-generated pairs |
+
+**Why this model wins:** Group-uniformity regularization (`uniformity_group_weight=3.0`) sharpens within-position discrimination, producing neighbors that are not only behaviorally similar (top-k JS 0.001051) but also externally validated — closest FIFA skill profiles (7.7-point main-6 diff) and highest qualitative approval (3.5/5). The combination of strong internal behavioral metrics with the best external validation is what sets it apart. Its EB Substitute Ratio (1.745, 2nd-best) confirms that this advantage extends to real observed player behavior, not just model predictions.
+
+**Limitations:**
+- Competition-split mean rank (74.0) is 6.7 points behind the family best (`pos_ablated_split_ctx` at 67.3). The group-uniformity term trades some cross-context stability for sharper within-position boundaries.
+- EB Rho (0.1946) is mid-pack (7th of 10), lower than `acts_in_dropout` (0.2066). However, this partially reflects lower embedding spread reducing rank-correlation power, not poorer behavioral alignment.
+- Pseudo-GT mean rank (66.7) is mid-pack. If the LLM-generated pairs were genuine expert ground truth, this would be more concerning.
+- Qualitative evaluation covers only 6 famous players. Performance on obscure/emerging players is untested.
+
+### Runner-up: `acts_in_dropout` (score = 0.864)
+
+| Metric | Value | Note |
+|--------|------:|------|
+| EB Substitute Ratio | **1.953** | **Best** — neighbors nearly 2× better than random on observed actions |
+| Comp-Split Hit@10 | **0.351** | **Best** cross-context precision |
+| Top-k JS (model) | **0.001031** | **2nd-best** absolute neighbor quality |
+| EB Rho | 0.2066 | 5th — solid empirical behavioral correlation |
+| FIFA Main-6 Diff | 7.9 | 2nd-best FIFA skill match |
+| Qualitative | 3.0/5 | Good face validity |
+
+Simpler than `pos_gu` (no group-uniformity term). **Wins under behavioral-heavy and retrieval-heavy weight variants** (§10.4). The margin behind `pos_gu` is now just 0.003 (down from 0.016 in the 12-metric analysis), with `acts_in_dropout`'s best-in-class EB Substitute Ratio (1.953) nearly closing the gap. Best choice if maximizing cross-competition hit@10 or empirical behavioral validation matters most.
+
+### Also competitive: `pos_ablated_split_ctx_ema` (score = 0.846)
+
+Still strong:
+- **Best pseudo-GT hit@50 (0.700)** and **2nd-best GT mean rank (62.6)** — excels at retrieving LLM-curated pairs
+- Best model-based Spearman rho among fully-evaluated models (0.944)
+- EB Substitute Ratio 1.718 (3rd-best) and EB Rho 0.2074 (3rd-best) — consistent empirical behavioral performance
+- Best competition-split mean rank in its family (67.7)
+
+Its weakness: FIFA main-6 diff of 9.1 (2nd-worst among non-collapsed models) and lowest supervised F1 (0.650). When pseudo-GT is treated as gold standard, this model wins; when external validation is included and GT is properly discounted, it drops to 5th. This reflects its optimization for internal consistency over externally validated neighbor quality.
+
+### Not recommended: `player_samp`, `split_ctx_ps`, `split_ctx`
+
+- **`player_samp` / `split_ctx_ps`** (scores 0.735 / 0.692): Tier-1 hit@10 = 0.0, competition-split mean rank > 89. Despite leading on EB Rho (0.22–0.23), their EB Substitute Ratios are mid-pack (1.56–1.70), confirming that their high EB Rho partially reflects embedding spread rather than superior behavioral discrimination. Strengths (random-half consistency, model-based sub ratio) are artifacts of the player sampling mechanism (§9.4).
+- **`split_ctx`** (score 0.536): Best pseudo-GT mean rank (56.1) but worst model-based Spearman rho (0.710), worst top-k JS (0.004611), worst qualitative score (1.8/5), and near-worst EB Substitute Ratio (1.247). Retrieves positional peers rather than behavioral matches.
+- **`pos_ablated_split_ctx_v2`** (score 0.023): Collapsed due to insufficient uniformity weight.

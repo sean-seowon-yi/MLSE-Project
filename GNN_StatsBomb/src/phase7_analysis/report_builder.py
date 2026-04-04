@@ -28,7 +28,10 @@ from ..phase4_model import PlayerSimilarityModel
 from ..phase6_inference import SimilaritySearcher, build_gender_map
 from ..phase6_inference.provenance import validate_manifest
 
-from .embedding_viz import compute_pca_coords, plot_pca_global, plot_pca_neighbourhood
+from .embedding_viz import (
+    compute_pca_coords, plot_pca_global, plot_pca_neighbourhood,
+    compute_tsne_coords, plot_tsne_global, plot_tsne_neighbourhood,
+)
 from .situation_comparison import SituationComparator
 
 
@@ -79,7 +82,7 @@ class ReportBuilder:
         if not ckpt_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
         ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt["model_state_dict"])
+        model.load_state_dict(ckpt["model_state_dict"], strict=False)
         model.to(device)
         model.eval()
         return model
@@ -147,6 +150,7 @@ class ReportBuilder:
         pid_to_coord: Dict[int, np.ndarray],
         output_dir: Path,
         gender_map: Optional[Dict[int, str]] = None,
+        tsne_pid_to_coord: Optional[Dict[int, np.ndarray]] = None,
     ) -> None:
         results = self.searcher.find_similar_players(
             query_player_id=query_pid,
@@ -223,6 +227,12 @@ class ReportBuilder:
             query_pid, neighbour_pids, pid_to_coord, player_info, output_dir,
         )
 
+        # ── t-SNE neighbourhood ──
+        if tsne_pid_to_coord:
+            plot_tsne_neighbourhood(
+                query_pid, neighbour_pids, tsne_pid_to_coord, player_info, output_dir,
+            )
+
     # ── public entry point ────────────────────────────────────────
 
     def run(self, output_dir: Optional[Path] = None) -> None:
@@ -293,6 +303,15 @@ class ReportBuilder:
         print("Generating global PCA plots (group, subgroup, position) …")
         plot_pca_global(Z, player_info, output_dir, pid_to_coord=pid_to_coord)
 
+        print("Computing t-SNE coordinates …")
+        tsne_pid_to_coord = compute_tsne_coords(Z, player_info)
+
+        if tsne_pid_to_coord:
+            print("Generating global t-SNE plots (group, subgroup, position) …")
+            plot_tsne_global(Z, player_info, output_dir, pid_to_coord=tsne_pid_to_coord)
+        else:
+            print("  Skipped t-SNE (too few players).")
+
         query_pids = self._choose_queries(player_info)
         print(f"Query players ({len(query_pids)}): {query_pids}")
 
@@ -312,6 +331,7 @@ class ReportBuilder:
                 pid_to_coord=pid_to_coord,
                 output_dir=output_dir,
                 gender_map=gender_map,
+                tsne_pid_to_coord=tsne_pid_to_coord,
             )
 
         print(f"\nAll reports saved to {output_dir}")

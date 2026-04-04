@@ -42,7 +42,8 @@ Both pipelines ultimately produce:
 | [GNN_StatsBomb/docs/DATA_QUALITY.md](GNN_StatsBomb/docs/DATA_QUALITY.md) | Data quality, edge cases, clamping, missing 360. |
 | [GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md](GNN_StatsBomb/docs/FUTURE_IMPROVEMENTS.md) | SOTA assessment, critical vulnerabilities & blind spots, and improvement roadmap. |
 | [GNN_StatsBomb/docs/PLAYER_SIMILARITY_FINAL_PLAN.md](GNN_StatsBomb/docs/PLAYER_SIMILARITY_FINAL_PLAN.md) | Original high-level plan and design notes. |
-| [GNN_StatsBomb/docs/EVALUATION_RESULTS.md](GNN_StatsBomb/docs/EVALUATION_RESULTS.md) | Baseline and ablation evaluation results, policy diagnostics, and FIFA comparison. |
+| [GNN_StatsBomb/docs/EVALUATION_RESULTS.md](GNN_StatsBomb/docs/EVALUATION_RESULTS.md) | Cross-model evaluation (registered pipelines and archived runs), policy diagnostics, and FIFA comparison. |
+| [GNN_StatsBomb/docs/pseudo_ground_truth.md](GNN_StatsBomb/docs/pseudo_ground_truth.md) | Curated pseudo ground-truth pairs (rationale only; no metric results). |
 
 ---
 
@@ -81,6 +82,7 @@ Project/
 │   ├── README.md
 │   ├── SYSTEM_DESIGN.md      # Full system design & rationale
 │   ├── main.py               # Multi-phase CLI (Phases 1–7 + evaluate)
+│   ├── find_player.py           # Name → player_id lookup (accent + fuzzy; for --mode search)
 │   ├── match_fifa_players.py    # FIFA-StatsBomb player matcher
 │   ├── test_fifa_comparison.py  # FIFA stat comparison & visualizations
 │   ├── requirements.txt
@@ -88,24 +90,26 @@ Project/
 │   │   ├── README.md         # Docs index & phase links
 │   │   ├── PHASE1.md … PHASE7.md   # Per-phase documentation
 │   │   ├── DATA_QUALITY.md   # Data quality & edge cases
+│   │   ├── pseudo_ground_truth.md  # Curated similarity pairs (rationale; no results)
 │   │   └── PLAYER_SIMILARITY_FINAL_PLAN.md
 │   ├── src/
 │   │   ├── config.py
 │   │   ├── data_preparation.py
 │   │   ├── feature_encoder.py
+│   │   ├── heuristics.py         # Non-GNN embedding heuristics
 │   │   ├── phase2_possession/    # Possession grouping
 │   │   ├── phase3_graph/         # Hetero event+player graphs (with 360 context)
 │   │   ├── phase4_model/         # Encoder + FiLM + pooling + heads
 │   │   ├── phase5_training/      # Losses, dataset, trainer
-│   │   ├── phase6_inference/     # z_p generation + similarity search
-│   │   └── phase7_analysis/      # Situation-level counterfactual analysis
+│   │   ├── phase6_inference/     # z_p, search, evals, embedding_eval, empirical_behavioral
+│   │   └── phase7_analysis/      # Reports, PCA/t-SNE, possession_animation
 │   ├── checkpoints/{tag}/     # Model checkpoints per pipeline variant (generated)
-│   ├── embeddings/{tag}/      # Player embeddings, reports, PCA plots per variant (generated)
+│   ├── embeddings/{tag}/      # Player embeddings, reports, PCA/t-SNE plots per variant (generated)
 │   ├── evaluations/         # Unified evaluation outputs (generated)
 │   └── processed_data/       # Encoded events, possessions, graphs (generated)
 │
 ├── progress_reports/        # Project progress reports (e.g. milestone PDFs)
-├── assets/                   # Media (e.g. sample videos; not tracked)
+├── assets/                   # Optional media (folder may be absent locally; not tracked)
 ├── FIFA_data/               # FIFA/EA Sports FC matched player data (local only; not tracked)
 ├── SkillCorner/              # SkillCorner data (local only; not tracked)
 └── StatsBomb/                # StatsBomb data (local only; not tracked)
@@ -165,9 +169,19 @@ This will:
 
 Optional after training:
 
-- **evaluate** — run the best checkpoint on the held-out test set; reports accuracy, macro F1, and outcome metrics, and saves confusion matrices and ROC curves to `checkpoints/{tag}/evaluation/`.
+- **evaluate** — run the best checkpoint on the held-out test set; reports accuracy, macro F1, and outcome metrics, and saves confusion matrices and ROC curves under **`evaluations/{tag}/test_metrics/`** (default).
 
 Once embeddings exist, you can:
+
+**Resolve a name to a StatsBomb `player_id` (optional):**
+
+```bash
+python find_player.py "de bruyne"
+python find_player.py --tag split_ctx mbappe
+python find_player.py --all putellas   # includes players below embedding min-possessions
+```
+
+Matching is **accent-insensitive** and uses **fuzzy** scoring (via `rapidfuzz`) unless you pass `--no-fuzzy`.
 
 **Search for similar players:**
 
@@ -175,7 +189,7 @@ Once embeddings exist, you can:
 python main.py --mode search --player_id <STATS_BOMB_PLAYER_ID>
 ```
 
-Similarity search is **gender-aware**: male query players only retrieve male candidates, and female queries only female candidates.
+Top‑`k` is set by `InferenceConfig.top_k` (default 10). Similarity search is **gender-aware**: male query players only retrieve male candidates, and female queries only female candidates.
 
 **Run full evaluation for all pipeline variants:**
 
@@ -183,7 +197,9 @@ Similarity search is **gender-aware**: male query players only retrieve male can
 python main.py --mode full_eval_all --eval_output_dir ./evaluations
 ```
 
-This evaluates all four pipeline variants (baseline, split-context, player-sampling, combined) and saves organized results under `evaluations/{pipeline_name}/`.
+`full_eval` / `full_eval_all` run **11 steps** per pipeline: inference, test metrics, ground truth, position-group retrieval, split-half stability (skipped for GNN; runs for heuristics), qualitative neighbours, self-consistency, policy diagnostic, **empirical behavioral** fidelity (observed-action JS vs random peers), Phase 7 analysis, FIFA comparison. Results live under `evaluations/{pipeline_name}/{step}/`.
+
+**Heuristics** (`generate_heuristics`, `eval_heuristics`, `full_eval_all_with_heuristics`) produce non-GNN embeddings and the same evaluation layout for comparison.
 
 **Run situation-level analysis (Phase 7):**
 
@@ -196,9 +212,11 @@ Phase 7:
 - Picks query players and their nearest neighbours in embedding space.  
 - Samples real game situations (events) from the query player.  
 - For each situation, compares **predicted action distributions** (type, direction, length) of the query vs candidates, holding the state fixed.  
-- Saves text reports and visualisations under `GNN_StatsBomb/embeddings/{tag}/analysis/`:  
+- Saves text reports and visualisations under `embeddings/{tag}/analysis/` when run standalone, or under `evaluations/{tag}/analysis/` when run inside `full_eval`:  
   - **Bar charts** — action-type and direction (angle-bin) probabilities per situation.  
-  - **PCA plots** — global embedding space in three variants (by position group, by subgroup, by full position), plus per-query neighbourhood views (query and top-k highlighted).
+  - **PCA and t-SNE plots** — global 2D embedding space (by position group, subgroup, and full position), plus per-query neighbourhood views for both reductions.
+
+**Possession animation** (`--mode possession_animation`): renders an MP4/GIF of ball path + predicted actions for counterfactual players (see `main.py` for `--pipeline`, `--list-possessions`, `--graph-index`, `--players`, `--dynamic-substitute`). Implemented in `src/phase7_analysis/possession_animation.py`; not part of `full_eval`.
 
 **FIFA stat comparison (validates similarity against FIFA player attributes):**
 
@@ -280,7 +298,8 @@ Each `requirements.txt` pins the necessary versions of:
 
 - PyTorch, PyTorch Geometric, and friends  
 - Numerical stack: `numpy`, `pandas`, `scikit-learn`  
-- Visualisation and utilities: `matplotlib`, `seaborn`, `tqdm`, etc.
+- Visualisation and utilities: `matplotlib`, `seaborn`, `tqdm`, etc.  
+- **StatsBomb** pipeline also lists **`rapidfuzz`** (used by `find_player.py` for name lookup).
 
 ---
 

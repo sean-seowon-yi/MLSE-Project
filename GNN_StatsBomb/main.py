@@ -17,7 +17,11 @@ Modes
   analyze            Phase 7 — interpret embeddings and similarities.
   full_pipeline      Run Phases 1→6A end-to-end (no search).
   full_eval          Run ALL post-training evaluations for one pipeline.
-  full_eval_all      Run ALL post-training evaluations for ALL 4 pipelines.
+  full_eval_all      Run ALL post-training evaluations for ALL 11 pipelines.
+  generate_heuristics Generate embeddings for simple heuristics (no training).
+  eval_heuristics     Evaluate all heuristics with embedding-only metrics.
+  full_eval_all_with_heuristics  full_eval_all + eval_heuristics in one run.
+  possession_animation  MP4/GIF: possession ball path + two-player counterfactual arrows.
 
 Usage
 ─────
@@ -25,6 +29,7 @@ Usage
   python main.py --mode build_possessions
   python main.py --mode build_graphs
   python main.py --mode train
+  python main.py --mode train --pipeline acts_in_dropout
   python main.py --mode evaluate
   python main.py --mode inference
   python main.py --mode search --player_id 5503
@@ -33,13 +38,26 @@ Usage
   python main.py --mode full_pipeline
   python main.py --mode analyze
 
+  # Counterfactual possession animation (needs train+inference for --pipeline)
+  python main.py --mode possession_animation --pipeline acts_in_dropout_pos_gu --list-possessions
+  python main.py --mode possession_animation --pipeline acts_in_dropout_pos_gu --graph-index 0 --players 123,456
+
+  # Dynamic substitute: random possession, auto-pair each on-ball actor with their top-1 neighbor
+  python main.py --mode possession_animation --pipeline acts_in_dropout_pos_gu --random --dynamic-substitute
+  python main.py --mode possession_animation --pipeline acts_in_dropout_pos_gu --random --dynamic-substitute --num-possessions 3
+
   # Run all evaluations for one pipeline
   python main.py --mode full_eval
   python main.py --mode full_eval --tag split_ctx --split_context_edges
   python main.py --mode full_eval --eval_output_dir ./my_evals
 
-  # Run all evaluations for ALL 4 pipelines
+  # Run all evaluations for ALL 11 pipelines
   python main.py --mode full_eval_all
+
+  # Simple heuristics (no training required — only needs Phase 1 data)
+  python main.py --mode generate_heuristics
+  python main.py --mode eval_heuristics
+  python main.py --mode full_eval_all_with_heuristics
 
 Experiment tagging (ablation)
 ─────────────────────────────
@@ -49,6 +67,8 @@ Experiment tagging (ablation)
 
   python main.py --mode train --player_sampling --tag player_samp
   python main.py --mode train --split_context_edges --player_sampling --tag split_ctx_ps
+
+  python main.py --mode train --ablate_position --split_context_edges --tag pos_ablated_split_ctx
 
   --tag namespaces Phase 3+ outputs (graphs, checkpoints, embeddings)
   while sharing Phase 1-2 data.  Omit --tag to use the baseline
@@ -81,26 +101,103 @@ PIPELINE_REGISTRY = [
         "tag": "",
         "split_context_edges": False,
         "player_sampling": False,
+        "ablate_position": False,
     },
     {
         "name": "player_samp",
         "tag": "player_samp",
         "split_context_edges": False,
         "player_sampling": True,
+        "ablate_position": False,
     },
     {
         "name": "split_ctx",
         "tag": "split_ctx",
         "split_context_edges": True,
         "player_sampling": False,
+        "ablate_position": False,
     },
     {
         "name": "split_ctx_ps",
         "tag": "split_ctx_ps",
         "split_context_edges": True,
         "player_sampling": True,
+        "ablate_position": False,
+    },
+    {
+        "name": "pos_ablated",
+        "tag": "pos_ablated",
+        "split_context_edges": False,
+        "player_sampling": False,
+        "ablate_position": True,
+    },
+    {
+        "name": "pos_ablated_split_ctx",
+        "tag": "pos_ablated_split_ctx",
+        "split_context_edges": True,
+        "player_sampling": False,
+        "ablate_position": True,
+        "uniformity_t": 4.0,
+        "lambda_pooled_contrast": 1.0,
+    },
+    {
+        "name": "pos_ablated_split_ctx_v2",
+        "tag": "pos_ablated_split_ctx_v2",
+        "split_context_edges": True,
+        "player_sampling": False,
+        "ablate_position": True,
+        "uniformity_t": 4.0,
+        "lambda_pooled_contrast": 0.7,
+    },
+    {
+        "name": "pos_ablated_split_ctx_ema",
+        "tag": "pos_ablated_split_ctx_ema",
+        "split_context_edges": True,
+        "player_sampling": False,
+        "ablate_position": True,
+        "uniformity_t": 4.0,
+        "lambda_pooled_contrast": 1.0,
+        "ema_alignment": True,
+        "lambda_alignment": 0.3,
+        "ema_momentum": 0.999,
+    },
+    {
+        "name": "acts_in_dropout",
+        "tag": "acts_in_dropout",
+        "split_context_edges": True,
+        "player_sampling": False,
+        "ablate_position": True,
+        "uniformity_t": 4.0,
+        "lambda_pooled_contrast": 1.0,
+        "acts_in_dropout": 0.3,
+    },
+    {
+        "name": "acts_in_dropout_pos",
+        "tag": "acts_in_dropout_pos",
+        "split_context_edges": True,
+        "player_sampling": False,
+        "ablate_position": True,
+        "uniformity_t": 4.0,
+        "lambda_pooled_contrast": 1.0,
+        "acts_in_dropout": 0.3,
+        "lambda_pos": 0.3,
+    },
+    {
+        "name": "acts_in_dropout_pos_gu",
+        "tag": "acts_in_dropout_pos_gu",
+        "split_context_edges": True,
+        "player_sampling": False,
+        "ablate_position": True,
+        "uniformity_t": 4.0,
+        "lambda_pooled_contrast": 1.0,
+        "acts_in_dropout": 0.3,
+        "lambda_pos": 0.3,
+        "uniformity_group_weight": 3.0,
     },
 ]
+
+
+PIPELINE_NAMES = [p["name"] for p in PIPELINE_REGISTRY]
 
 
 def _configure_pipeline(pipe_def: dict) -> Config:
@@ -108,6 +205,8 @@ def _configure_pipeline(pipe_def: dict) -> Config:
     config = get_config()
     if pipe_def["split_context_edges"]:
         config.graph.split_context_edges = True
+    if pipe_def.get("ablate_position", False):
+        config.model.ablate_position = True
     if pipe_def["player_sampling"]:
         config.training.player_sampling = True
         config.training.contrastive_temperature = 0.15
@@ -119,6 +218,34 @@ def _configure_pipeline(pipe_def: dict) -> Config:
         config.training.anneal_pooled_weight = True
         config.training.pooled_weight_start = 0.10
         config.training.pooled_weight_end = 0.50
+    if "uniformity_t" in pipe_def:
+        config.training.uniformity_t = pipe_def["uniformity_t"]
+    if "lambda_pooled_contrast" in pipe_def:
+        config.training.lambda_pooled_contrast = pipe_def["lambda_pooled_contrast"]
+    if pipe_def.get("ema_alignment", False):
+        config.training.ema_alignment = True
+    if "lambda_alignment" in pipe_def:
+        config.training.lambda_alignment = pipe_def["lambda_alignment"]
+    if "ema_momentum" in pipe_def:
+        config.training.ema_momentum = pipe_def["ema_momentum"]
+    if "lambda_contrast" in pipe_def:
+        config.training.lambda_contrast = pipe_def["lambda_contrast"]
+    if "batch_size" in pipe_def:
+        config.training.batch_size = pipe_def["batch_size"]
+    if "players_per_batch" in pipe_def:
+        config.training.players_per_batch = pipe_def["players_per_batch"]
+    if "possessions_per_player" in pipe_def:
+        config.training.possessions_per_player = pipe_def["possessions_per_player"]
+    if "anneal_temperature" in pipe_def:
+        config.training.anneal_temperature = pipe_def["anneal_temperature"]
+    if "anneal_pooled_weight" in pipe_def:
+        config.training.anneal_pooled_weight = pipe_def["anneal_pooled_weight"]
+    if "acts_in_dropout" in pipe_def:
+        config.training.acts_in_dropout = pipe_def["acts_in_dropout"]
+    if "lambda_pos" in pipe_def:
+        config.training.lambda_pos = pipe_def["lambda_pos"]
+    if "uniformity_group_weight" in pipe_def:
+        config.training.uniformity_group_weight = pipe_def["uniformity_group_weight"]
     if pipe_def["tag"]:
         config.apply_tag(pipe_def["tag"])
     return config
@@ -134,6 +261,12 @@ def _build_run_info(
         "tag": config.tag,
         "graphs_filename": config.graphs_filename,
         "split_context_edges": bool(config.graph.split_context_edges),
+        "ablate_position": bool(config.model.ablate_position),
+        "uniformity_t": config.training.uniformity_t,
+        "lambda_pooled_contrast": config.training.lambda_pooled_contrast,
+        "ema_alignment": bool(config.training.ema_alignment),
+        "lambda_alignment": config.training.lambda_alignment,
+        "ema_momentum": config.training.ema_momentum,
         "checkpoint_dir": str(Path(config.training.checkpoint_dir).resolve()),
         "embedding_output_dir": str(Path(config.inference.embedding_output_dir).resolve()),
     }
@@ -472,7 +605,7 @@ def run_evaluate(config: Config, eval_output_dir: Optional[Path] = None) -> None
         print("Run --mode train first.")
         return
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(ckpt["model_state_dict"], strict=False)
     model = model.to(device)
 
     eval_dir = eval_output_dir or _default_eval_dir(config, "test_metrics")
@@ -542,7 +675,7 @@ def run_inference(
         print("Run --mode train first.")
         return
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(ckpt["model_state_dict"], strict=False)
 
     generator = EmbeddingGenerator(model, device, config.inference)
     Z, player_info = generator.generate(graphs, meta)
@@ -769,7 +902,7 @@ def run_self_consistency(config: Config, eval_output_dir: Optional[Path] = None)
         print("Run --mode train first.")
         return
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(ckpt["model_state_dict"], strict=False)
 
     emb_dir = Path(config.inference.embedding_output_dir)
 
@@ -908,7 +1041,7 @@ def run_policy_diagnostic(config: Config, eval_output_dir: Optional[Path] = None
 
     model = PlayerSimilarityModel(config.model, graph_config=config.graph)
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(ckpt["model_state_dict"], strict=False)
 
     print("Building gender map ...")
     try:
@@ -975,6 +1108,94 @@ def run_policy_diagnostic(config: Config, eval_output_dir: Optional[Path] = None
 
     print(f"\nReport: {out / 'policy_diagnostic_report.txt'}")
     print(f"JSON:   {out / 'policy_diagnostic_results.json'}")
+
+
+# ── Empirical behavioral fidelity ────────────────────────────────────────
+
+def run_empirical_behavioral(config: Config, eval_output_dir: Optional[Path] = None) -> None:
+    """Run empirical behavioral fidelity evaluation.
+
+    Unlike the model-based policy diagnostic (which uses the model's own
+    predicted action distributions), this uses observed player actions
+    bucketed by coarse game state (pitch third × under-pressure) to
+    compute empirical JS divergence.  Spearman ρ between embedding cosine
+    distance and empirical JS provides a non-self-referential measure of
+    behavioral fidelity.
+
+    When *eval_output_dir* is given, saves outputs there; otherwise
+    defaults to ``evaluations/{tag}/empirical_behavioral/``.
+    """
+    from src.phase6_inference.empirical_behavioral import EmpiricalBehavioralFidelity
+    from src.phase6_inference import build_gender_map
+
+    print("\n" + "=" * 60)
+    print("EMPIRICAL BEHAVIORAL FIDELITY")
+    print("=" * 60)
+
+    out_dir = Path(config.data.output_dir)
+    features = np.load(out_dir / "event_features.npy")
+    meta = pd.read_parquet(out_dir / "event_metadata.parquet")
+
+    print(f"\nEvents loaded: {features.shape[0]:,}  Features: {features.shape[1]}-D")
+
+    emb_dir = Path(config.inference.embedding_output_dir)
+    Z = np.load(emb_dir / "player_embeddings.npy")
+    player_info = pd.read_parquet(emb_dir / "player_info.parquet")
+
+    print(f"Embeddings loaded: {Z.shape[0]} players, {Z.shape[1]}-D")
+
+    print("Building gender map ...")
+    try:
+        gender_map = build_gender_map(
+            config.data.output_dir, config.data.statsbomb_base_path,
+        )
+        n_m = sum(1 for v in gender_map.values() if v == "male")
+        n_f = sum(1 for v in gender_map.values() if v == "female")
+        print(f"  Gender map: {n_m} male, {n_f} female")
+    except FileNotFoundError as e:
+        print(f"  Warning: could not build gender map ({e}); skipping gender filter.")
+        gender_map = None
+
+    out = eval_output_dir or _default_eval_dir(config, "empirical_behavioral")
+
+    evaluator = EmpiricalBehavioralFidelity(
+        features=features,
+        metadata=meta,
+        Z=Z,
+        player_info=player_info,
+        gender_map=gender_map,
+    )
+
+    result = evaluator.run(output_dir=out)
+    _augment_json_report(
+        out / "empirical_behavioral_results.json",
+        _build_run_info(
+            config,
+            embedding_dir=emb_dir,
+            extra={"mode": "empirical_behavioral"},
+        ),
+    )
+
+    corr = result.get("correlation", {})
+    if "overall" in corr:
+        ov = corr["overall"]
+        print(f"\n--- Empirical Behavioral Correlation ---")
+        print(f"  Overall Spearman rho: {ov['spearman_rho']:.4f}  "
+              f"(p = {ov['p_value']:.4e}, {ov['n_valid_pairs']:,} pairs)")
+        for grp in sorted(k for k in corr if k != "overall"):
+            g = corr[grp]
+            print(f"  {grp:25s}: rho = {g['spearman_rho']:+.4f}  "
+                  f"(p = {g['p_value']:.4e})")
+
+    sub = result.get("substitute_quality", {})
+    if sub.get("n_queries", 0) > 0:
+        print(f"\n--- Empirical Substitute Quality ---")
+        print(f"  JS(top-K) = {sub['aggregate_mean_js_top_k']:.6f}  "
+              f"JS(random) = {sub['aggregate_mean_js_random_k']:.6f}  "
+              f"ratio = {sub['aggregate_ratio']:.2f}")
+
+    print(f"\nReport: {out / 'empirical_behavioral_report.txt'}")
+    print(f"JSON:   {out / 'empirical_behavioral_results.json'}")
 
 
 # ── FIFA comparison ──────────────────────────────────────────────────────
@@ -1053,16 +1274,300 @@ def run_full_pipeline(config: Config) -> None:
     run_inference(config)
 
 
+# ── Heuristics ───────────────────────────────────────────────────────────
+
+HEURISTIC_REGISTRY = [
+    {"name": "h_mean_features", "method": "mean_features"},
+    {"name": "h_action_profile", "method": "action_profile"},
+    {"name": "h_fifa_attributes", "method": "fifa_attributes"},
+]
+
+# Evaluation steps that only require embeddings (no trained model / graphs).
+_HEURISTIC_EVAL_STEPS = [
+    ("ground_truth",           "Pseudo ground-truth pair ranking"),
+    ("position_retrieval",     "Position-group retrieval precision"),
+    ("split_half",             "Split-half embedding stability"),
+    ("qualitative_neighbors",  "Qualitative nearest-neighbor table"),
+    ("fifa_comparison",        "FIFA stat comparison test"),
+]
+
+
+def generate_heuristics(config: Config) -> None:
+    """Generate embeddings for all simple heuristics."""
+    from src.heuristics import (
+        generate_mean_features,
+        generate_action_profile,
+        generate_fifa_heuristic,
+    )
+
+    print("\n" + "=" * 60)
+    print("GENERATE SIMPLE HEURISTICS")
+    print("=" * 60)
+
+    out_dir = Path(config.data.output_dir)
+    features = np.load(out_dir / "event_features.npy")
+    meta = pd.read_parquet(out_dir / "event_metadata.parquet")
+    min_ev = config.inference.min_samples_per_player
+
+    print(f"\nEvents: {features.shape[0]:,}  Features: {features.shape[1]}-D")
+    print(f"Min events per player: {min_ev}")
+
+    for h in HEURISTIC_REGISTRY:
+        name = h["name"]
+        method = h["method"]
+        emb_dir = Path("embeddings") / name
+        print(f"\n{'─'*60}")
+        print(f"Heuristic: {name}")
+        print(f"{'─'*60}")
+
+        if method == "mean_features":
+            generate_mean_features(features, meta, emb_dir, min_events=min_ev)
+        elif method == "action_profile":
+            generate_action_profile(features, meta, emb_dir, min_events=min_ev)
+        elif method == "fifa_attributes":
+            project_root = Path(__file__).resolve().parent.parent
+            fifa_dir = project_root / "FIFA_data"
+            male_csv = fifa_dir / "statsbomb_male_players_fifa.csv"
+            female_csv = fifa_dir / "statsbomb_female_players_fifa.csv"
+            if not male_csv.exists() or not female_csv.exists():
+                print(f"  FIFA CSVs not found in {fifa_dir} — skipping.")
+                continue
+            generate_fifa_heuristic(meta, male_csv, female_csv, emb_dir, min_events=min_ev)
+
+    print(f"\n{'='*60}")
+    print("ALL HEURISTICS GENERATED")
+    print("=" * 60)
+
+
+def _run_embedding_evals(
+    Z: np.ndarray,
+    player_info: pd.DataFrame,
+    config: Config,
+    pipe_dir: Path,
+    gender_map: Optional[Dict[int, str]],
+    embed_fn=None,
+    step_offset: int = 0,
+    total_steps: int = 0,
+) -> None:
+    """Run position retrieval, split-half stability, and qualitative neighbors.
+
+    These evaluations work on any embedding (GNN or baseline).
+    *embed_fn* is needed only for split-half; if None that step is skipped.
+    """
+    from src.phase6_inference.embedding_eval import (
+        evaluate_position_retrieval,
+        evaluate_split_half_stability,
+        evaluate_qualitative_neighbors,
+    )
+
+    step = step_offset
+
+    # Position-group retrieval precision
+    step += 1
+    tag = f"[{step}/{total_steps}]" if total_steps else ""
+    print(f"\n{'='*70}")
+    print(f"  {tag} Position-group retrieval precision")
+    print(f"  → {pipe_dir / 'position_retrieval'}")
+    print(f"{'='*70}")
+    pr_result = evaluate_position_retrieval(
+        Z, player_info,
+        output_dir=pipe_dir / "position_retrieval",
+        gender_map=gender_map,
+    )
+    for k in [5, 10, 20]:
+        rk = pr_result["position_retrieval"].get(str(k), {})
+        if rk:
+            print(f"  Precision@{k}: {rk['overall_precision']:.3f}")
+
+    # Split-half stability
+    step += 1
+    tag = f"[{step}/{total_steps}]" if total_steps else ""
+    print(f"\n{'='*70}")
+    print(f"  {tag} Split-half embedding stability")
+    print(f"  → {pipe_dir / 'split_half'}")
+    print(f"{'='*70}")
+    if embed_fn is not None:
+        out_dir_data = Path(config.data.output_dir)
+        features = np.load(out_dir_data / "event_features.npy")
+        meta = pd.read_parquet(out_dir_data / "event_metadata.parquet")
+        sh_result = evaluate_split_half_stability(
+            features, meta, embed_fn,
+            output_dir=pipe_dir / "split_half",
+            min_events=config.inference.min_samples_per_player,
+            gender_map=gender_map,
+        )
+        sh_summary = sh_result.get("split_half", {}).get("summary", {})
+        if sh_summary:
+            print(f"  Mean self-rank: {sh_summary['mean_rank']:.1f}")
+            print(f"  Hit@1: {sh_summary['hit_at_1']:.1%}  "
+                  f"Hit@5: {sh_summary['hit_at_5']:.1%}")
+    else:
+        print("  Skipped (no embed_fn for split-half).")
+
+    # Qualitative neighbors
+    step += 1
+    tag = f"[{step}/{total_steps}]" if total_steps else ""
+    print(f"\n{'='*70}")
+    print(f"  {tag} Qualitative nearest-neighbor table")
+    print(f"  → {pipe_dir / 'qualitative_neighbors'}")
+    print(f"{'='*70}")
+    qn_result = evaluate_qualitative_neighbors(
+        Z, player_info,
+        output_dir=pipe_dir / "qualitative_neighbors",
+        gender_map=gender_map,
+    )
+    n_found = len(qn_result.get("qualitative_neighbors", []))
+    print(f"  Notable players found in embeddings: {n_found}")
+
+
+def run_heuristic_eval(
+    heuristic_name: str,
+    config: Config,
+    eval_root: Path,
+) -> None:
+    """Run embedding-only evaluations for one heuristic."""
+    import time
+    from src.phase6_inference import build_gender_map
+    from src.phase6_inference.ground_truth import evaluate_ground_truth
+
+    emb_dir = Path("embeddings") / heuristic_name
+    if not (emb_dir / "player_embeddings.npy").exists():
+        print(f"  Embeddings not found in {emb_dir} — run generate_heuristics first.")
+        return
+
+    pipe_dir = eval_root / heuristic_name
+    pipe_dir.mkdir(parents=True, exist_ok=True)
+
+    t0 = time.time()
+    total = len(_HEURISTIC_EVAL_STEPS)
+
+    print(f"\n{'#'*70}")
+    print(f"#  HEURISTIC EVALUATION: {heuristic_name}")
+    print(f"#  Output directory: {pipe_dir}")
+    print(f"{'#'*70}")
+
+    Z = np.load(emb_dir / "player_embeddings.npy")
+    player_info = pd.read_parquet(emb_dir / "player_info.parquet")
+    print(f"\n  Embeddings: {Z.shape[0]} players, {Z.shape[1]}-D")
+
+    print("\n  Building gender map ...")
+    try:
+        gender_map = build_gender_map(
+            config.data.output_dir, config.data.statsbomb_base_path,
+        )
+    except FileNotFoundError:
+        gender_map = None
+
+    # Step 1: Ground truth
+    print(f"\n{'='*70}")
+    print(f"  [1/{total}] Pseudo ground-truth evaluation")
+    print(f"  → {pipe_dir / 'ground_truth'}")
+    print(f"{'='*70}")
+    gt_dir = pipe_dir / "ground_truth"
+    result = evaluate_ground_truth(
+        Z,
+        player_info,
+        output_dir=gt_dir,
+        similarity_metric=config.inference.similarity_metric,
+        gender_map=gender_map,
+    )
+    summary = result["summary"]
+    print(f"  Pairs evaluated: {summary['n_evaluated']}")
+    if summary["n_evaluated"] > 0:
+        print(f"  Mean rank : {summary['mean_rank']:.1f}")
+        print(f"  Hit@10    : {summary['hit_at_10']:.1%}")
+        print(f"  Hit@20    : {summary['hit_at_20']:.1%}")
+
+    # Steps 2-4: Position retrieval, split-half, qualitative neighbors
+    # Resolve the embed_fn for split-half based on heuristic method
+    embed_fn = None
+    h_def = next((h for h in HEURISTIC_REGISTRY if h["name"] == heuristic_name), None)
+    if h_def:
+        method = h_def["method"]
+        if method == "mean_features":
+            from src.heuristics import embed_fn_mean_features
+            embed_fn = embed_fn_mean_features
+        elif method == "action_profile":
+            from src.heuristics import embed_fn_action_profile
+            embed_fn = embed_fn_action_profile
+        # fifa_attributes has no per-event embed_fn (stats come from external CSV)
+
+    _run_embedding_evals(
+        Z, player_info, config, pipe_dir, gender_map,
+        embed_fn=embed_fn,
+        step_offset=1,
+        total_steps=total,
+    )
+
+    # Step 5: FIFA comparison
+    print(f"\n{'='*70}")
+    print(f"  [5/{total}] FIFA stat comparison test")
+    print(f"  → {pipe_dir / 'fifa_comparison'}")
+    print(f"{'='*70}")
+
+    orig_emb_dir = config.inference.embedding_output_dir
+    try:
+        config.inference.embedding_output_dir = str(emb_dir)
+        run_fifa_comparison(config, eval_output_dir=pipe_dir / "fifa_comparison")
+    finally:
+        config.inference.embedding_output_dir = orig_emb_dir
+
+    elapsed = time.time() - t0
+    print(f"\n{'#'*70}")
+    print(f"#  HEURISTIC EVALUATION COMPLETE: {heuristic_name}")
+    print(f"#  Time: {int(elapsed // 60)}m {int(elapsed % 60)}s")
+    print(f"#  Outputs: {pipe_dir}")
+    print(f"{'#'*70}")
+
+
+def run_eval_heuristics(eval_root: Path, config: Config) -> None:
+    """Evaluate all heuristics in HEURISTIC_REGISTRY."""
+    import time
+
+    eval_root.mkdir(parents=True, exist_ok=True)
+    n = len(HEURISTIC_REGISTRY)
+    t0 = time.time()
+
+    print("\n" + "=" * 70)
+    print("  HEURISTIC EVALUATION — ALL HEURISTICS")
+    print("=" * 70)
+    for i, h in enumerate(HEURISTIC_REGISTRY, 1):
+        print(f"  {i}. {h['name']}")
+    print(f"\nOutput root: {eval_root}")
+
+    for i, h in enumerate(HEURISTIC_REGISTRY, 1):
+        name = h["name"]
+        emb_path = Path("embeddings") / name / "player_embeddings.npy"
+        if not emb_path.exists():
+            print(f"\n  Skipping {name} (embeddings not generated).")
+            continue
+        print(f"\n{'*'*70}")
+        print(f"*  HEURISTIC {i}/{n}: {name}")
+        print(f"{'*'*70}")
+        run_heuristic_eval(name, config, eval_root)
+
+    elapsed = time.time() - t0
+    print(f"\n{'='*70}")
+    print(f"  ALL HEURISTICS EVALUATED")
+    print(f"  Time: {int(elapsed // 60)}m {int(elapsed % 60)}s")
+    print(f"  Results: {eval_root}")
+    print("=" * 70)
+
+
 # ── Full evaluation orchestrator ─────────────────────────────────────────
 
 _EVAL_STEPS = [
-    ("inference",          "Phase 6 — Embedding generation"),
-    ("test_metrics",       "Test-set evaluation (accuracy, F1, AUC)"),
-    ("ground_truth",       "Pseudo ground-truth pair ranking"),
-    ("self_consistency",   "Self-consistency (competition-split + random-half)"),
-    ("policy_diagnostic",  "Policy diagnostic (JS correlation, substitute quality, FiLM)"),
-    ("analysis",           "Phase 7 — Situation-level similarity analysis"),
-    ("fifa_comparison",    "FIFA stat comparison test"),
+    ("inference",              "Phase 6 — Embedding generation"),
+    ("test_metrics",           "Test-set evaluation (accuracy, F1, AUC)"),
+    ("ground_truth",           "Pseudo ground-truth pair ranking"),
+    ("position_retrieval",     "Position-group retrieval precision"),
+    ("split_half",             "Split-half embedding stability"),
+    ("qualitative_neighbors",  "Qualitative nearest-neighbor table"),
+    ("self_consistency",       "Self-consistency (competition-split + random-half)"),
+    ("policy_diagnostic",      "Policy diagnostic (JS correlation, substitute quality, FiLM)"),
+    ("empirical_behavioral",   "Empirical behavioral fidelity (observed-action JS)"),
+    ("analysis",               "Phase 7 — Situation-level similarity analysis"),
+    ("fifa_comparison",        "FIFA stat comparison test"),
 ]
 
 
@@ -1109,20 +1614,42 @@ def run_full_eval(config: Config, eval_root: Path) -> None:
     _step_banner(3, "ground_truth", "Pseudo ground-truth evaluation")
     run_ground_truth(config, eval_output_dir=pipe_dir / "ground_truth")
 
-    # Step 4: Self-consistency
-    _step_banner(4, "self_consistency", "Self-consistency evaluation")
+    # Steps 4-6: Position retrieval, split-half, qualitative neighbors
+    emb_dir = Path(config.inference.embedding_output_dir)
+    Z = np.load(emb_dir / "player_embeddings.npy")
+    pi = pd.read_parquet(emb_dir / "player_info.parquet")
+
+    from src.phase6_inference import build_gender_map as _build_gm
+    try:
+        _gm = _build_gm(config.data.output_dir, config.data.statsbomb_base_path)
+    except FileNotFoundError:
+        _gm = None
+
+    _run_embedding_evals(
+        Z, pi, config, pipe_dir, _gm,
+        embed_fn=None,
+        step_offset=3,
+        total_steps=total,
+    )
+
+    # Step 7: Self-consistency
+    _step_banner(7, "self_consistency", "Self-consistency evaluation")
     run_self_consistency(config, eval_output_dir=pipe_dir / "self_consistency")
 
-    # Step 5: Policy diagnostic
-    _step_banner(5, "policy_diagnostic", "Policy diagnostic")
+    # Step 8: Policy diagnostic
+    _step_banner(8, "policy_diagnostic", "Policy diagnostic")
     run_policy_diagnostic(config, eval_output_dir=pipe_dir / "policy_diagnostic")
 
-    # Step 6: Phase 7 analysis
-    _step_banner(6, "analysis", "Situation-level analysis (Phase 7)")
+    # Step 9: Empirical behavioral fidelity
+    _step_banner(9, "empirical_behavioral", "Empirical behavioral fidelity")
+    run_empirical_behavioral(config, eval_output_dir=pipe_dir / "empirical_behavioral")
+
+    # Step 10: Phase 7 analysis
+    _step_banner(10, "analysis", "Situation-level analysis (Phase 7)")
     analyze_results(config, eval_output_dir=pipe_dir / "analysis")
 
-    # Step 7: FIFA comparison
-    _step_banner(7, "fifa_comparison", "FIFA stat comparison test")
+    # Step 11: FIFA comparison
+    _step_banner(11, "fifa_comparison", "FIFA stat comparison test")
     run_fifa_comparison(config, eval_output_dir=pipe_dir / "fifa_comparison")
 
     elapsed = time.time() - t0
@@ -1188,8 +1715,12 @@ def main():
             "prepare", "build_possessions", "build_graphs",
             "train", "evaluate", "inference", "search", "ground_truth",
             "self_consistency", "full_pipeline", "analyze",
-            "policy_diagnostic", "fifa_comparison",
+            "policy_diagnostic", "empirical_behavioral", "fifa_comparison",
+            "position_retrieval", "split_half", "qualitative_neighbors",
             "full_eval", "full_eval_all",
+            "generate_heuristics", "eval_heuristics", "eval_heuristic",
+            "full_eval_all_with_heuristics",
+            "possession_animation",
         ],
         help="Pipeline phase to run.",
     )
@@ -1229,6 +1760,17 @@ def main():
         ),
     )
     parser.add_argument(
+        "--pipeline",
+        type=str,
+        default=None,
+        choices=PIPELINE_NAMES,
+        help=(
+            "Load training/model config from PIPELINE_REGISTRY (same entries as "
+            "full_eval_all).  Example: --mode train --pipeline acts_in_dropout.  "
+            "Explicit flags after this (e.g. --uniformity_t, --tag) still apply on top."
+        ),
+    )
+    parser.add_argument(
         "--split_context_edges", action="store_true", default=False,
         help=(
             "Split 360 context edges into teammate/opponent relation "
@@ -1247,11 +1789,151 @@ def main():
         ),
     )
     parser.add_argument(
+        "--ablate_position", action="store_true", default=False,
+        help=(
+            "Remove all position information from the model.  "
+            "PlayerProjection ignores position_idx (uses only team_flag, "
+            "dx, dy); FiLM conditions on z_p alone (no position channel).  "
+            "Position still exists in graph data for contrastive loss "
+            "hard-negative mining.  Must be passed consistently for "
+            "train, evaluate, inference, and analyze."
+        ),
+    )
+    parser.add_argument(
+        "--uniformity_t", type=float, default=None,
+        help=(
+            "Gaussian-potential sensitivity parameter for the uniformity "
+            "loss (default 2.0).  Higher values focus the gradient on the "
+            "closest pairs, penalising embedding compression more "
+            "aggressively.  Use with --lambda_pooled to control strength."
+        ),
+    )
+    parser.add_argument(
+        "--lambda_pooled", type=float, default=None,
+        help=(
+            "Weight of the pooled-uniformity loss term (default 0.3).  "
+            "Increase to give the uniformity loss more influence relative "
+            "to the action-prediction loss."
+        ),
+    )
+    parser.add_argument(
+        "--ema_alignment", action="store_true", default=False,
+        help=(
+            "Enable cross-batch EMA alignment loss on pooled z_p.  "
+            "Maintains a momentum-updated memory bank of each player's "
+            "z_p and adds a cosine alignment loss that pulls the current "
+            "z_p toward the historical EMA entry."
+        ),
+    )
+    parser.add_argument(
+        "--lambda_alignment", type=float, default=None,
+        help=(
+            "Weight of the EMA alignment loss term (default 0.3).  "
+            "Only active when --ema_alignment is set."
+        ),
+    )
+    parser.add_argument(
+        "--ema_momentum", type=float, default=None,
+        help=(
+            "EMA decay rate for the player memory bank (default 0.999).  "
+            "Higher values give more stable targets."
+        ),
+    )
+    parser.add_argument(
+        "--acts_in_dropout", type=float, default=None,
+        help=(
+            "Probability of dropping ('player','acts_in','event') edges "
+            "during training, forcing the model to rely on z_p via FiLM "
+            "for actor identity (default 0.3 with acts_in_dropout pipelines)."
+        ),
+    )
+    parser.add_argument(
+        "--lambda_pos", type=float, default=None,
+        help=(
+            "Weight of the position-group cross-entropy auxiliary loss on "
+            "z_p (default 0.3 with acts_in_dropout pipeline).  Activates a "
+            "Linear(d, NUM_POSITION_GROUPS) head on z_p."
+        ),
+    )
+    parser.add_argument(
+        "--uniformity_group_weight", type=float, default=None,
+        help=(
+            "Extra weight applied to same-position-group pairs in the "
+            "uniformity loss (default 3.0 with acts_in_dropout pipeline).  "
+            "Higher values focus separation on within-group pairs."
+        ),
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=None,
+        help="Override training batch size (default 96).",
+    )
+    parser.add_argument(
         "--resume", type=str, default=None,
         help=(
             "Resume training from a checkpoint file (e.g. "
             "'checkpoint_epoch_130.pt').  Loads model weights, optimizer, "
             "scheduler, and best_val_loss.  Only applies to --mode train."
+        ),
+    )
+    parser.add_argument(
+        "--graph-index", type=int, default=None,
+        help="Possession graph index (from --list-possessions). For possession_animation.",
+    )
+    parser.add_argument(
+        "--match-id", type=int, default=None,
+        help="StatsBomb match_id to locate a possession (with --possession-number, --possession-team-id).",
+    )
+    parser.add_argument(
+        "--possession-number", type=int, default=None,
+        help="Possession number within the match (with --match-id, --possession-team-id).",
+    )
+    parser.add_argument(
+        "--possession-team-id", type=int, default=None,
+        help="Team id that has the ball for this possession (with --match-id, --possession-number).",
+    )
+    parser.add_argument(
+        "--players", type=str, default=None,
+        help=(
+            "Two comma-separated player IDs for counterfactual overlay "
+            "(must have embeddings). If you list more than two, only the first two are used. "
+            "Default: first two distinct actors in chronological order on the possession."
+        ),
+    )
+    parser.add_argument(
+        "--animation-output", type=str, default="animations/possession_overlay.mp4",
+        help="Output path for possession_animation (.mp4 or .gif).",
+    )
+    parser.add_argument(
+        "--animation-fps", type=float, default=0.5,
+        help="Frames per second for possession_animation (default 0.5 = 2 s per event; lower is slower).",
+    )
+    parser.add_argument(
+        "--list-possessions", action="store_true",
+        help="List sample graph indices (match_id, pos_key, n_events) and exit.",
+    )
+    parser.add_argument(
+        "--random", action="store_true",
+        help="Pick a random possession graph for possession_animation.",
+    )
+    parser.add_argument(
+        "--dynamic-substitute", action="store_true",
+        help=(
+            "Dynamic substitute mode for possession_animation: "
+            "automatically identify each on-ball actor, find their "
+            "top-1 embedding neighbor, and overlay both. The substitute "
+            "switches whenever the on-ball actor changes."
+        ),
+    )
+    parser.add_argument(
+        "--random-seed", type=int, default=None,
+        help="Seed for --random possession selection (reproducibility).",
+    )
+    parser.add_argument(
+        "--num-possessions", type=int, default=1,
+        help=(
+            "Number of consecutive possessions to animate (1-5, default 1). "
+            "Only used with --dynamic-substitute. Consecutive possessions are "
+            "taken from the same match in possession-number order."
         ),
     )
     parser.add_argument(
@@ -1265,8 +1947,13 @@ def main():
     args = parser.parse_args()
 
     config = get_config()
+    if args.pipeline is not None:
+        pipe_def = next(p for p in PIPELINE_REGISTRY if p["name"] == args.pipeline)
+        config = _configure_pipeline(pipe_def)
     if args.split_context_edges:
         config.graph.split_context_edges = True
+    if args.ablate_position:
+        config.model.ablate_position = True
     if args.player_sampling:
         config.training.player_sampling = True
         config.training.contrastive_temperature = 0.15
@@ -1278,6 +1965,24 @@ def main():
         config.training.anneal_pooled_weight = True
         config.training.pooled_weight_start = 0.10
         config.training.pooled_weight_end = 0.50
+    if args.uniformity_t is not None:
+        config.training.uniformity_t = args.uniformity_t
+    if args.lambda_pooled is not None:
+        config.training.lambda_pooled_contrast = args.lambda_pooled
+    if args.ema_alignment:
+        config.training.ema_alignment = True
+    if args.lambda_alignment is not None:
+        config.training.lambda_alignment = args.lambda_alignment
+    if args.ema_momentum is not None:
+        config.training.ema_momentum = args.ema_momentum
+    if args.acts_in_dropout is not None:
+        config.training.acts_in_dropout = args.acts_in_dropout
+    if args.lambda_pos is not None:
+        config.training.lambda_pos = args.lambda_pos
+    if args.uniformity_group_weight is not None:
+        config.training.uniformity_group_weight = args.uniformity_group_weight
+    if args.batch_size is not None:
+        config.training.batch_size = args.batch_size
     if args.tag:
         config.apply_tag(args.tag)
     if args.competition:
@@ -1289,21 +1994,38 @@ def main():
     print("GNN STATSBOMB PLAYER SIMILARITY SYSTEM")
     print("=" * 60)
     print(f"Mode         : {args.mode}")
+    if config.model.ablate_position:
+        print(f"Position     : ABLATED (no position in model)")
     if config.graph.split_context_edges:
         print(f"Context edges: split (teammate / opponent)")
+    if config.training.uniformity_t != 2.0 or config.training.lambda_pooled_contrast != 0.3:
+        print(f"Uniformity   : t={config.training.uniformity_t}  "
+              f"λ_pooled={config.training.lambda_pooled_contrast}")
+    if config.training.ema_alignment:
+        print(f"EMA alignment: λ={config.training.lambda_alignment}  "
+              f"momentum={config.training.ema_momentum}")
+    if config.training.acts_in_dropout > 0:
+        print(f"Acts-in drop : p={config.training.acts_in_dropout}")
+    if config.training.lambda_pos > 0:
+        print(f"Pos-group aux: \u03bb_pos={config.training.lambda_pos}")
+    if config.training.uniformity_group_weight != 1.0:
+        print(f"Group uniform: w={config.training.uniformity_group_weight}")
+    if config.training.batch_size != 96:
+        print(f"Batch size   : {config.training.batch_size}")
     if config.training.player_sampling:
         print(f"Sampling     : player-aware (K={config.training.players_per_batch}, "
               f"M={config.training.possessions_per_player})")
-        print(f"  temperature: {config.training.contrastive_temperature}  "
-              f"λ_contrast: {config.training.lambda_contrast}  "
-              f"λ_pooled: {config.training.lambda_pooled_contrast}")
-        if config.training.anneal_temperature or config.training.anneal_pooled_weight:
-            parts = []
-            if config.training.anneal_temperature:
-                parts.append(f"temp {config.training.temperature_start}->{config.training.temperature_end}")
-            if config.training.anneal_pooled_weight:
-                parts.append(f"λ_pooled {config.training.pooled_weight_start}->{config.training.pooled_weight_end}")
-            print(f"  annealing  : {', '.join(parts)}")
+        if config.training.lambda_contrast > 0:
+            print(f"  temperature: {config.training.contrastive_temperature}  "
+                  f"λ_contrast: {config.training.lambda_contrast}  "
+                  f"λ_pooled: {config.training.lambda_pooled_contrast}")
+            if config.training.anneal_temperature or config.training.anneal_pooled_weight:
+                parts = []
+                if config.training.anneal_temperature:
+                    parts.append(f"temp {config.training.temperature_start}->{config.training.temperature_end}")
+                if config.training.anneal_pooled_weight:
+                    parts.append(f"λ_pooled {config.training.pooled_weight_start}->{config.training.pooled_weight_end}")
+                print(f"  annealing  : {', '.join(parts)}")
     print(f"Tag          : {config.tag or 'baseline'}")
     print(f"  graphs     : {config.data.output_dir}/{config.graphs_filename}")
     print(f"  checkpoints: {config.training.checkpoint_dir}")
@@ -1342,9 +2064,44 @@ def main():
     elif args.mode == "policy_diagnostic":
         eval_dir = _default_eval_dir(config, "policy_diagnostic")
         run_policy_diagnostic(config, eval_output_dir=eval_dir)
+    elif args.mode == "empirical_behavioral":
+        eval_dir = _default_eval_dir(config, "empirical_behavioral")
+        run_empirical_behavioral(config, eval_output_dir=eval_dir)
     elif args.mode == "fifa_comparison":
         eval_dir = _default_eval_dir(config, "fifa_comparison")
         run_fifa_comparison(config, eval_output_dir=eval_dir)
+    elif args.mode in ("position_retrieval", "split_half", "qualitative_neighbors"):
+        from src.phase6_inference import build_gender_map as _bgm
+        from src.phase6_inference.embedding_eval import (
+            evaluate_position_retrieval,
+            evaluate_split_half_stability,
+            evaluate_qualitative_neighbors,
+        )
+        from src.heuristics import embed_fn_mean_features
+
+        emb_dir = Path(config.inference.embedding_output_dir)
+        Z = np.load(emb_dir / "player_embeddings.npy")
+        pi = pd.read_parquet(emb_dir / "player_info.parquet")
+        try:
+            gm = _bgm(config.data.output_dir, config.data.statsbomb_base_path)
+        except FileNotFoundError:
+            gm = None
+
+        eval_dir = _default_eval_dir(config, args.mode)
+        if args.mode == "position_retrieval":
+            evaluate_position_retrieval(Z, pi, output_dir=eval_dir, gender_map=gm)
+        elif args.mode == "split_half":
+            out_dir_data = Path(config.data.output_dir)
+            features = np.load(out_dir_data / "event_features.npy")
+            meta = pd.read_parquet(out_dir_data / "event_metadata.parquet")
+            evaluate_split_half_stability(
+                features, meta, embed_fn_mean_features,
+                output_dir=eval_dir,
+                min_events=config.inference.min_samples_per_player,
+                gender_map=gm,
+            )
+        elif args.mode == "qualitative_neighbors":
+            evaluate_qualitative_neighbors(Z, pi, output_dir=eval_dir, gender_map=gm)
     elif args.mode == "search":
         if args.player_id is None:
             parser.error("--player_id is required for search mode.")
@@ -1353,6 +2110,34 @@ def main():
         run_full_eval(config, eval_root=Path(args.eval_output_dir))
     elif args.mode == "full_eval_all":
         run_full_eval_all(eval_root=Path(args.eval_output_dir))
+    elif args.mode == "generate_heuristics":
+        generate_heuristics(config)
+    elif args.mode in ("eval_heuristics", "eval_heuristic"):
+        run_eval_heuristics(eval_root=Path(args.eval_output_dir), config=config)
+    elif args.mode == "full_eval_all_with_heuristics":
+        run_full_eval_all(eval_root=Path(args.eval_output_dir))
+        generate_heuristics(config)
+        run_eval_heuristics(eval_root=Path(args.eval_output_dir), config=config)
+    elif args.mode == "possession_animation":
+        if args.pipeline is None:
+            parser.error("--mode possession_animation requires --pipeline (checkpoint + embeddings).")
+        from src.phase7_analysis.possession_animation import run_possession_animation_cli
+
+        run_possession_animation_cli(
+            config,
+            graph_index=args.graph_index,
+            match_id=args.match_id,
+            possession_number=args.possession_number,
+            possession_team_id=args.possession_team_id,
+            players_csv=args.players,
+            output=Path(args.animation_output),
+            fps=float(args.animation_fps),
+            list_only=args.list_possessions,
+            random_possession=args.random,
+            dynamic_substitute=args.dynamic_substitute,
+            random_seed=args.random_seed,
+            num_possessions=args.num_possessions,
+        )
 
     print("\n" + "=" * 60)
     print("COMPLETE")

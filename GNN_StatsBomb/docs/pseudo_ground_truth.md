@@ -9,6 +9,8 @@ nearest-neighbour rankings agree with these externally motivated pairs.
 
 These are **not** strict benchmarks.  See [Caveats](#caveats) below.
 
+Pairs are implemented in `src/phase6_inference/ground_truth.py`.  Run **`--mode ground_truth`** or the ground-truth step inside **`full_eval`**; results are written under `evaluations/{tag}/ground_truth/` (not in this document).
+
 **Last updated:** March 2026
 
 ## Dataset Context

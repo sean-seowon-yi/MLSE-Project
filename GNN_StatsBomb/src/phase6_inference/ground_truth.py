@@ -300,10 +300,21 @@ def evaluate_ground_truth(
         rank_b_in_a = _get_rank(sim_matrix, idx_a, idx_b, mask=gender_mask_a)
         rank_a_in_b = _get_rank(sim_matrix, idx_b, idx_a, mask=gender_mask_b)
 
+        if gender_mask_a is not None:
+            gallery_a = int(gender_mask_a.sum()) - 1
+        else:
+            gallery_a = len(pids) - 1
+        if gender_mask_b is not None:
+            gallery_b = int(gender_mask_b.sum()) - 1
+        else:
+            gallery_b = len(pids) - 1
+
         entry["status"] = "OK"
         entry["similarity"] = round(cos_sim, 4)
         entry["rank_b_in_a"] = rank_b_in_a
         entry["rank_a_in_b"] = rank_a_in_b
+        entry["gallery_size_a"] = gallery_a
+        entry["gallery_size_b"] = gallery_b
         pair_results.append(entry)
 
     summary = _compute_summary(pair_results, len(pids))
@@ -314,7 +325,8 @@ def evaluate_ground_truth(
 
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
-        _write_report(pair_results, summary, len(pids), output_dir)
+        _write_report(pair_results, summary, len(pids), output_dir,
+                       gender_map=gender_map, pids=pids)
         json_path = output_dir / "ground_truth_results.json"
         with open(json_path, "w") as f:
             json.dump(result, f, indent=2)
@@ -430,7 +442,9 @@ def _compute_summary(pair_results: list, n_players: int) -> dict:
 
 
 def _write_report(
-    pair_results: list, summary: dict, n_players: int, output_dir: Path
+    pair_results: list, summary: dict, n_players: int, output_dir: Path,
+    gender_map: Optional[Dict[int, str]] = None,
+    pids: Optional[np.ndarray] = None,
 ) -> None:
     """Write a human-readable text report."""
     lines: list[str] = []
@@ -442,6 +456,11 @@ def _write_report(
     n_eval = summary["n_evaluated"]
     n_miss = summary["n_missing"]
     lines.append(f"Players in embedding space : {n_players}")
+    if gender_map and pids is not None:
+        n_m = sum(1 for pid in pids if gender_map.get(int(pid)) == "male")
+        n_f = sum(1 for pid in pids if gender_map.get(int(pid)) == "female")
+        lines.append(f"  male gallery             : {n_m}")
+        lines.append(f"  female gallery           : {n_f}")
     lines.append(f"Similarity metric          : {summary.get('similarity_metric', 'cosine')}")
     lines.append(f"Gender filtering           : {'Yes' if summary.get('gender_filtered') else 'No'}")
     lines.append(f"Ground-truth pairs total   : {summary['n_pairs_total']}")
@@ -465,17 +484,19 @@ def _write_report(
             sim = p["similarity"]
             r_ab = p["rank_b_in_a"]
             r_ba = p["rank_a_in_b"]
+            gal_a = p.get("gallery_size_a", n_players - 1)
+            gal_b = p.get("gallery_size_b", n_players - 1)
 
             lines.append(
                 f"  {summary.get('similarity_metric', 'cosine')} similarity : {sim:.4f}"
             )
             lines.append(
                 f"  rank of {p['player_b']:30s} in {p['player_a']:30s} neighbours : "
-                f"{r_ab:>4d} / {n_players - 1}"
+                f"{r_ab:>4d} / {gal_a}"
             )
             lines.append(
                 f"  rank of {p['player_a']:30s} in {p['player_b']:30s} neighbours : "
-                f"{r_ba:>4d} / {n_players - 1}"
+                f"{r_ba:>4d} / {gal_b}"
             )
             avg = (r_ab + r_ba) / 2
             if avg <= 5:

@@ -22,7 +22,7 @@ from tqdm import tqdm
 
 from ..config import TrainingConfig, POSITION_IDX_TO_GROUP
 from ..phase4_model.model import PlayerSimilarityModel
-from .losses import CombinedLoss
+from .losses import AlignmentLoss, CombinedLoss, EMAPlayerMemoryBank
 
 _POS_TO_GROUP_T = torch.tensor(POSITION_IDX_TO_GROUP, dtype=torch.long)
 
@@ -71,7 +71,24 @@ class Trainer:
             lambda_contrast=config.lambda_contrast,
             lambda_pooled_contrast=config.lambda_pooled_contrast,
             contrastive_temperature=config.contrastive_temperature,
+            uniformity_t=config.uniformity_t,
+            lambda_alignment=config.lambda_alignment if config.ema_alignment else 0.0,
+            lambda_pos=config.lambda_pos,
+            uniformity_group_weight=config.uniformity_group_weight,
         ).to(self.device)
+
+        if config.acts_in_dropout > 0:
+            self.model.acts_in_dropout = config.acts_in_dropout
+
+        self.memory_bank: Optional[EMAPlayerMemoryBank] = None
+        self.alignment_loss_fn: Optional[AlignmentLoss] = None
+        if config.ema_alignment:
+            embed_dim = model.pooling.score_net[0].in_features
+            self.memory_bank = EMAPlayerMemoryBank(
+                embed_dim=embed_dim,
+                momentum=config.ema_momentum,
+            )
+            self.alignment_loss_fn = AlignmentLoss().to(self.device)
 
         self.best_val_loss = float("inf")
         self.best_val_total = float("inf")
@@ -82,12 +99,16 @@ class Trainer:
             "train_outcome": [],
             "train_contrastive": [],
             "train_pooled_uniform": [],
+            "train_alignment": [],
+            "train_pos_group": [],
             "val_total": [],
             "val_supervised": [],
             "val_action": [],
             "val_outcome": [],
             "val_contrastive": [],
             "val_pooled_uniform": [],
+            "val_alignment": [],
+            "val_pos_group": [],
             "learning_rate": [],
         }
 
@@ -140,7 +161,20 @@ class Trainer:
             return self.history
 
         print(f"Training on device: {self.device}")
-        print(f"Epochs: {self.config.num_epochs}, Batch size: {self.config.batch_size}")
+        if self.config.player_sampling:
+            eff_bs = (
+                self.config.players_per_batch * self.config.possessions_per_player
+            )
+            print(
+                f"Epochs: {self.config.num_epochs}, Batch size: {eff_bs} "
+                f"(K={self.config.players_per_batch} players x "
+                f"M={self.config.possessions_per_player} possessions/graphs)"
+            )
+        else:
+            print(
+                f"Epochs: {self.config.num_epochs}, "
+                f"Batch size: {self.config.batch_size}"
+            )
         print(f"LR: {self.config.learning_rate}")
 
         for epoch in range(start_epoch, self.config.num_epochs):
@@ -168,25 +202,43 @@ class Trainer:
             self.history["train_outcome"].append(train_losses["outcome"])
             self.history["train_contrastive"].append(train_losses["contrastive"])
             self.history["train_pooled_uniform"].append(train_losses["pooled_uniform"])
+            self.history["train_alignment"].append(train_losses["alignment"])
+            self.history["train_pos_group"].append(train_losses["pos_group"])
             self.history["val_total"].append(val_losses["total"])
             self.history["val_supervised"].append(val_supervised)
             self.history["val_action"].append(val_losses["action"])
             self.history["val_outcome"].append(val_losses["outcome"])
             self.history["val_contrastive"].append(val_losses["contrastive"])
             self.history["val_pooled_uniform"].append(val_losses["pooled_uniform"])
+            self.history["val_alignment"].append(val_losses["alignment"])
+            self.history["val_pos_group"].append(val_losses["pos_group"])
             self.history["learning_rate"].append(lr)
 
-            print(f"Train — total: {train_losses['total']:.4f}  "
-                  f"action: {train_losses['action']:.4f}  "
-                  f"outcome: {train_losses['outcome']:.4f}  "
-                  f"contrast: {train_losses['contrastive']:.4f}  "
-                  f"uniform: {train_losses['pooled_uniform']:.4f}")
-            print(f"Val   — supervised: {val_supervised:.4f}  "
-                  f"action: {val_losses['action']:.4f}  "
-                  f"outcome: {val_losses['outcome']:.4f}  "
-                  f"contrast: {val_losses['contrastive']:.4f}  "
-                  f"uniform: {val_losses['pooled_uniform']:.4f}  "
-                  f"LR: {lr:.6f}")
+            train_line = (f"Train — total: {train_losses['total']:.4f}  "
+                          f"action: {train_losses['action']:.4f}  "
+                          f"outcome: {train_losses['outcome']:.4f}  ")
+            if self.config.lambda_contrast > 0:
+                train_line += (
+                    f"contrast: {train_losses['contrastive']:.4f}  "
+                )
+            train_line += f"uniform: {train_losses['pooled_uniform']:.4f}"
+            val_line = (f"Val   — supervised: {val_supervised:.4f}  "
+                        f"action: {val_losses['action']:.4f}  "
+                        f"outcome: {val_losses['outcome']:.4f}  ")
+            if self.config.lambda_contrast > 0:
+                val_line += f"contrast: {val_losses['contrastive']:.4f}  "
+            val_line += (
+                f"uniform: {val_losses['pooled_uniform']:.4f}  "
+                f"LR: {lr:.6f}"
+            )
+            if self.memory_bank is not None:
+                train_line += f"  align: {train_losses['alignment']:.4f}"
+                val_line += f"  align: {val_losses['alignment']:.4f}"
+            if self.config.lambda_pos > 0:
+                train_line += f"  pos: {train_losses['pos_group']:.4f}"
+                val_line += f"  pos: {val_losses['pos_group']:.4f}"
+            print(train_line)
+            print(val_line)
 
             if val_supervised < self.best_val_loss - self.config.min_delta:
                 self.best_val_loss = val_supervised
@@ -240,7 +292,11 @@ class Trainer:
 
     def _train_epoch(self) -> Dict[str, float]:
         self.model.train()
-        accum = {"total": 0.0, "action": 0.0, "outcome": 0.0, "contrastive": 0.0, "pooled_uniform": 0.0}
+        accum = {
+            "total": 0.0, "action": 0.0, "outcome": 0.0,
+            "contrastive": 0.0, "pooled_uniform": 0.0, "alignment": 0.0,
+            "pos_group": 0.0,
+        }
         n_batches = 0
 
         for batch in tqdm(self.train_loader, desc="Training", leave=False):
@@ -252,13 +308,8 @@ class Trainer:
 
             outputs = self.model(data)
 
-            # Outcome: mean-pool event outcomes per possession then
-            # expand to match the per-possession outcome_targets.
-            # For simplicity, use the mean of per-event outcome logits.
             outcome_logits_per_event = outputs["outcome"]  # (E_total, 2)
 
-            # Build per-possession outcome logits via scatter-mean
-            # using the batch vector for the "event" node type.
             batch_vec = data["event"].batch  # (E_total,)
             n_poss = outcome_targets.shape[0]
             outcome_logits = torch.zeros(n_poss, 2, device=self.device)
@@ -268,16 +319,12 @@ class Trainer:
             counts = counts.clamp(min=1.0)
             outcome_logits = outcome_logits / counts
 
-            # Contrastive loss on pre-pooling h_player with hard negatives.
-            # h_player has one entry per player node in the batch; the same
-            # player_id can appear in multiple possessions, giving positive
-            # pairs.  Position groups restrict negatives to same-role players.
             player_node_pids = data["player"].player_node_pids if hasattr(data["player"], "player_node_pids") else None
 
             cont_emb = None
             cont_pids = None
             cont_pos_groups = None
-            if player_node_pids is not None:
+            if self.config.lambda_contrast > 0 and player_node_pids is not None:
                 actor_mask = player_node_pids >= 0
                 if actor_mask.any():
                     cont_emb = outputs["h_player"][actor_mask]
@@ -288,6 +335,22 @@ class Trainer:
                     cont_pos_groups = pos_group_map[actor_pos_idx]
 
             pooled_emb = outputs.get("pooled_z_p")
+            pooled_pids = outputs.get("pooled_z_p_pids")
+
+            l_align = None
+            if (self.memory_bank is not None
+                    and self.alignment_loss_fn is not None
+                    and pooled_emb is not None
+                    and pooled_pids is not None):
+                z_hist, mask = self.memory_bank.lookup(pooled_pids, self.device)
+                l_align = self.alignment_loss_fn(pooled_emb, z_hist, mask)
+
+            pooled_pos_groups = outputs.get("pooled_z_p_pos_groups")
+
+            l_pos = None
+            pos_logits = outputs.get("pos_group_logits")
+            if pos_logits is not None and pooled_pos_groups is not None:
+                l_pos = nn.functional.cross_entropy(pos_logits, pooled_pos_groups)
 
             losses = self.criterion(
                 preds={
@@ -302,11 +365,19 @@ class Trainer:
                 contrastive_player_ids=cont_pids,
                 contrastive_position_groups=cont_pos_groups,
                 pooled_embeddings=pooled_emb,
+                pooled_position_groups=pooled_pos_groups,
+                alignment_loss=l_align,
+                pos_group_loss=l_pos,
             )
 
             losses["total"].backward()
             nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
+
+            if (self.memory_bank is not None
+                    and pooled_emb is not None
+                    and pooled_pids is not None):
+                self.memory_bank.update(pooled_pids, pooled_emb)
 
             for k in accum:
                 accum[k] += losses[k].item()
@@ -318,7 +389,11 @@ class Trainer:
     @torch.no_grad()
     def _validate(self) -> Dict[str, float]:
         self.model.eval()
-        accum = {"total": 0.0, "action": 0.0, "outcome": 0.0, "contrastive": 0.0, "pooled_uniform": 0.0}
+        accum = {
+            "total": 0.0, "action": 0.0, "outcome": 0.0,
+            "contrastive": 0.0, "pooled_uniform": 0.0, "alignment": 0.0,
+            "pos_group": 0.0,
+        }
         n_batches = 0
 
         for batch in tqdm(self.val_loader, desc="Validation", leave=False):
@@ -341,7 +416,7 @@ class Trainer:
             cont_emb = None
             cont_pids = None
             cont_pos_groups = None
-            if player_node_pids is not None:
+            if self.config.lambda_contrast > 0 and player_node_pids is not None:
                 actor_mask = player_node_pids >= 0
                 if actor_mask.any():
                     cont_emb = outputs["h_player"][actor_mask]
@@ -352,6 +427,22 @@ class Trainer:
                     cont_pos_groups = pos_group_map[actor_pos_idx]
 
             pooled_emb = outputs.get("pooled_z_p")
+            pooled_pids = outputs.get("pooled_z_p_pids")
+
+            l_align = None
+            if (self.memory_bank is not None
+                    and self.alignment_loss_fn is not None
+                    and pooled_emb is not None
+                    and pooled_pids is not None):
+                z_hist, mask = self.memory_bank.lookup(pooled_pids, self.device)
+                l_align = self.alignment_loss_fn(pooled_emb, z_hist, mask)
+
+            pooled_pos_groups = outputs.get("pooled_z_p_pos_groups")
+
+            l_pos = None
+            pos_logits = outputs.get("pos_group_logits")
+            if pos_logits is not None and pooled_pos_groups is not None:
+                l_pos = nn.functional.cross_entropy(pos_logits, pooled_pos_groups)
 
             losses = self.criterion(
                 preds={
@@ -366,6 +457,9 @@ class Trainer:
                 contrastive_player_ids=cont_pids,
                 contrastive_position_groups=cont_pos_groups,
                 pooled_embeddings=pooled_emb,
+                pooled_position_groups=pooled_pos_groups,
+                alignment_loss=l_align,
+                pos_group_loss=l_pos,
             )
             for k in accum:
                 accum[k] += losses[k].item()
@@ -386,12 +480,11 @@ class Trainer:
         path = self.checkpoint_dir / filename
         if val_total is None:
             val_total = val_supervised
-        torch.save({
+        ckpt_data = {
             "epoch": epoch,
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "scheduler_state_dict": self.scheduler.state_dict(),
-            # Keep val_loss for backward compatibility with existing scripts.
             "val_loss": val_supervised,
             "val_supervised": val_supervised,
             "val_total": val_total,
@@ -399,7 +492,10 @@ class Trainer:
             "best_val_total": self.best_val_total,
             "patience_counter": self.patience_counter,
             "history": self.history,
-        }, path)
+        }
+        if self.memory_bank is not None:
+            ckpt_data["memory_bank"] = self.memory_bank.state_dict()
+        torch.save(ckpt_data, path)
 
     def load_checkpoint(self, filename: str) -> Tuple[int, float]:
         user_path = Path(filename)
@@ -408,7 +504,7 @@ class Trainer:
         else:
             path = self.checkpoint_dir / filename
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
-        self.model.load_state_dict(ckpt["model_state_dict"])
+        self.model.load_state_dict(ckpt["model_state_dict"], strict=False)
         self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         self.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
         self.best_val_loss = ckpt["best_val_loss"]
@@ -416,7 +512,12 @@ class Trainer:
         self.patience_counter = ckpt.get("patience_counter", 0)
         saved_history = ckpt.get("history")
         if saved_history and isinstance(saved_history, dict):
+            for key in self.history:
+                if key not in saved_history:
+                    saved_history[key] = []
             self.history = saved_history
+        if self.memory_bank is not None and "memory_bank" in ckpt:
+            self.memory_bank.load_state_dict(ckpt["memory_bank"])
         return ckpt["epoch"], ckpt.get("val_supervised", ckpt["val_loss"])
 
     def _save_history(self):
