@@ -205,7 +205,7 @@ Implementation: `src/phase7_analysis/possession_animation.py`. Not run by `full_
 | `acts_in_dropout_pos` | acts_in_dropout + position regularizer (`lambda_pos=0.3`) |
 | `acts_in_dropout_pos_gu` | `acts_in_dropout_pos` + stronger group uniformity (`uniformity_group_weight=3.0`) |
 
-Use `--mode full_eval_all` to evaluate all registered pipelines. Results are saved under `evaluations/{pipeline_name}/`. See [docs/EVALUATION_RESULTS.md](docs/EVALUATION_RESULTS.md) for comprehensive cross-model analysis.
+Use `--mode full_eval_all` to evaluate all registered pipelines. Results are saved under `evaluations/{tag}/` per pipeline (see `full_eval` above). See [docs/EVALUATION_RESULTS.md](docs/EVALUATION_RESULTS.md) for comprehensive cross-model analysis.
 
 ### Gender-aware evaluation
 
@@ -246,7 +246,7 @@ python main.py --mode full_eval --tag split_ctx --split_context_edges
 python main.py --mode full_eval_all --eval_output_dir ./evaluations
 ```
 
-`full_eval` runs **11** steps, in order: **inference** → **test_metrics** → **ground_truth** → **position_retrieval** → **split_half** (skipped for GNN; runs for heuristics with an event-based `embed_fn`) → **qualitative_neighbors** → **self_consistency** → **policy_diagnostic** → **empirical_behavioral** → **analysis** → **fifa_comparison**. Outputs are saved under `evaluations/{pipeline_name}/{step}/` (configurable root via `--eval_output_dir`).
+`full_eval` runs **11** steps, in order: **inference** → **test_metrics** → **ground_truth** → **position_retrieval** → **split_half** (skipped for GNN; runs for heuristics with an event-based `embed_fn`) → **qualitative_neighbors** → **self_consistency** → **policy_diagnostic** → **empirical_behavioral** → **analysis** → **fifa_comparison**. Outputs are saved under `evaluations/{tag}/{step}/`, where `{tag}` is `config.tag` or `baseline` if the tag is empty (matches each registry entry’s folder name in practice). Configurable root: `--eval_output_dir`.
 
 Related modes: **`generate_heuristics`**, **`eval_heuristics`**, **`full_eval_all_with_heuristics`** (orchestrates heuristic embedding generation and the same evaluation layout).
 
@@ -338,7 +338,7 @@ python main.py --mode full_pipeline
   - [docs/FUTURE_IMPROVEMENTS.md](docs/FUTURE_IMPROVEMENTS.md) — SOTA assessment and improvement roadmap.
   - [docs/PLAYER_SIMILARITY_FINAL_PLAN.md](docs/PLAYER_SIMILARITY_FINAL_PLAN.md) — High-level plan and design notes.
   - [docs/EVALUATION_RESULTS.md](docs/EVALUATION_RESULTS.md) — Cross-model evaluation results, policy diagnostics, empirical behavioral metrics.
-  - [docs/models/VIEW_CONSISTENCY.md](docs/models/VIEW_CONSISTENCY.md) — Proposed view-consistency variant (design note).
+  - [docs/models/VIEW_CONSISTENCY.md](docs/models/VIEW_CONSISTENCY.md) — View-consistency variant (design proposal; **not implemented** in code).
 
 These documents are kept consistent with the current implementation and are the best reference when extending or reviewing the system.
 

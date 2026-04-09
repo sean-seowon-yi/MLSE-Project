@@ -1,7 +1,7 @@
 """
 Loss functions for the player similarity training objectives.
 
-Combined loss:
+Combined loss (weights usually from ``TrainingConfig`` in ``config.py``):
   L = L_action + lambda_outcome * L_outcome + lambda_contrast * L_contrast
                + lambda_pooled * L_uniformity + lambda_align * L_alignment
                + lambda_pos * L_pos_group
@@ -314,12 +314,15 @@ class CombinedLoss(nn.Module):
                  + lambda_pooled * L_pooled_uniformity
                  + lambda_alignment * L_alignment
                  + lambda_pos * L_pos_group
+
+    Default ``lambda_*`` here match ``TrainingConfig``; the trainer passes
+    config values explicitly.
     """
 
     def __init__(
         self,
         lambda_outcome: float = 0.5,
-        lambda_contrast: float = 0.3,
+        lambda_contrast: float = 0.5,
         lambda_pooled_contrast: float = 0.3,
         contrastive_temperature: float = 0.05,
         uniformity_t: float = 2.0,

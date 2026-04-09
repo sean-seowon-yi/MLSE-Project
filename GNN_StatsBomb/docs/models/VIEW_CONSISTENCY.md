@@ -1,7 +1,8 @@
 # View-Consistency Pipeline (`view_consistency`)
 
-> **Status:** Proposed  
-> **Extends:** `pos_ablated_split_ctx`  
+> **Not implemented** — This document is a **design proposal only**. There is no `ViewConsistencyLoss` in `src/phase5_training/losses.py`, no `--view_consistency` or `--lambda_vc` flags in `main.py`, and no `PIPELINE_REGISTRY` entry. **Do not copy-paste the command in §10**; it will not run. For the real training objective, see [PHASE5.md](../PHASE5.md) and [SYSTEM_DESIGN.md](../../SYSTEM_DESIGN.md).
+>
+> **Extends (if built):** `pos_ablated_split_ctx`  
 > **Goal:** Find the best substitute player by learning context-invariant player trait embeddings
 
 ---
@@ -345,9 +346,12 @@ If FiLM + uniformity are insufficient to prevent collapse without contrastive, c
 
 ---
 
-## 10. Training Command
+## 10. Planned training command (not in the repo)
+
+The following is **illustrative** for whoever implements this design. It is **not** wired up today.
 
 ```bash
+# NOT AVAILABLE — flags below do not exist in main.py yet
 python main.py --mode train \
     --tag view_consistency \
     --ablate_position \
@@ -358,19 +362,18 @@ python main.py --mode train \
     --lambda_pooled 1.0
 ```
 
-Note: `--view_consistency` automatically enables player-aware sampling (K=32, M=8)
-and disables contrastive loss and annealing.
+**Intended behaviour (spec):** `--view_consistency` would enable player-aware sampling (e.g. K=32, M=8) and disable contrastive loss and annealing.
 
 ---
 
-## 11. File Change Summary
+## 11. Planned file changes (checklist — not applied)
 
-| File | Change |
-|------|--------|
+| File | Planned change |
+|------|----------------|
 | `src/phase5_training/losses.py` | Add `ViewConsistencyLoss` class. Modify `CombinedLoss` to accept `lambda_view_consistency` and `view_consistency_loss` in forward. |
 | `src/phase4_model/model.py` | Expose `dedup_actor_embs` and `dedup_actor_pids` in forward output dict. |
 | `src/config.py` | Add `view_consistency: bool` and `lambda_view_consistency: float` to `TrainingConfig`. |
 | `src/phase5_training/trainer.py` | Compute `ViewConsistencyLoss` from model outputs. Add history keys. When `view_consistency=True`, contrastive/alignment code paths remain inactive (lambdas=0). |
 | `main.py` | Add pipeline registry entry. Add `--view_consistency` and `--lambda_vc` CLI args. Update `_configure_pipeline`. |
 
-All changes are additive. Existing pipeline entries and their checkpoints are unaffected.
+If implemented as specified, these changes would be additive: existing pipeline entries and checkpoints would remain valid without the new flag.

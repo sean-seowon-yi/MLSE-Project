@@ -302,10 +302,10 @@ What survives masking (the "situational state"):
 The total loss is:
 
 ```
-L = L_action + 0.5 · L_outcome + 0.5 · L_contrastive + 0.3 · L_pooled_uniformity [+ 0.3 · L_alignment]
+L = L_action + λ_outcome · L_outcome + λ_contrast · L_contrastive + λ_pooled · L_pooled_uniformity [+ λ_alignment · L_alignment] [+ λ_pos · L_pos_group]
 ```
 
-The alignment term is optional, activated by `ema_alignment=True`. Default weights shown; all are configurable.
+Default training weights (see `TrainingConfig` in `config.py`): λ_outcome = 0.5, λ_contrast = 0.5, λ_pooled = 0.3 (`lambda_pooled_contrast`), λ_alignment = 0.3 when EMA alignment is enabled, λ_pos = 0.0 unless using a pipeline that sets `lambda_pos` (e.g. `acts_in_dropout_pos`). The alignment term is optional (`ema_alignment=True`). All weights are configurable.
 
 #### L_action: Focal Loss with Class Weights
 
@@ -758,7 +758,7 @@ A `PIPELINE_REGISTRY` in `main.py` defines all named GNN pipeline variants. The 
 10. Phase 7 analysis (`analyze`)
 11. FIFA stat comparison
 
-`full_eval_all` iterates through all registered pipelines. **`generate_heuristics`**, **`eval_heuristics`**, and **`full_eval_all_with_heuristics`** add or evaluate **mean-features**, **action-profile**, and **FIFA-attributes** heuristics under the same `evaluations/{pipeline_name}/…` layout. Configurable root: `--eval_output_dir` (default `./evaluations`).
+`full_eval_all` iterates through all registered pipelines. **`generate_heuristics`**, **`eval_heuristics`**, and **`full_eval_all_with_heuristics`** add or evaluate **mean-features**, **action-profile**, and **FIFA-attributes** heuristics under the same `evaluations/{tag}/…` layout as `full_eval` (`config.tag`, or `baseline` when empty). Configurable root: `--eval_output_dir` (default `./evaluations`).
 
 **Name → ID:** `find_player.py` uses accent folding and optional fuzzy matching (`rapidfuzz`) to obtain `player_id` for `--mode search`.
 
@@ -1108,7 +1108,7 @@ GNN_StatsBomb/
 │   │   └── analysis/                # Phase 7 reports & plots (when analyze run standalone)
 │   └── {tag}/                       # Tagged experiment embeddings (same structure)
 └── evaluations/                     # Unified evaluation outputs (generated)
-    └── {pipeline_name}/             # Per-pipeline evaluation results (GNN tags + heuristics)
+    └── {tag}/                       # Per-pipeline results: tag from config, or baseline if unset
         ├── test_metrics/            # Accuracy, F1, confusion matrices
         ├── ground_truth/            # Ground-truth pair evaluation
         ├── position_retrieval/      # Position-group retrieval precision
@@ -1116,6 +1116,7 @@ GNN_StatsBomb/
         ├── qualitative_neighbors/   # Notable-player neighbour tables
         ├── self_consistency/        # Self-consistency evaluation
         ├── policy_diagnostic/       # Policy diagnostic results
+        ├── empirical_behavioral/    # Observed-action JS fidelity (full_eval step 9)
         ├── analysis/                # Phase 7 analysis (when run via full_eval)
         └── fifa_comparison/         # FIFA stat comparison + visualizations
 ```

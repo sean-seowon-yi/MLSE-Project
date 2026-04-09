@@ -29,10 +29,10 @@ The **dataset** (and inference path) zero out parts of the event feature vector 
 ## Loss function
 
 ```
-L = L_action + λ_outcome · L_outcome + λ_contrast · L_contrastive + λ_pooled · L_pooled_uniformity [+ λ_alignment · L_alignment]
+L = L_action + λ_outcome · L_outcome + λ_contrast · L_contrastive + λ_pooled · L_pooled_uniformity [+ λ_alignment · L_alignment] [+ λ_pos · L_pos_group]
 ```
 
-Default weights: λ_outcome = 0.5, λ_contrast = 0.5, λ_pooled = 0.3. The alignment term is optional (enabled via `ema_alignment`).
+Default weights: λ_outcome = 0.5, λ_contrast = 0.5, λ_pooled = 0.3 (see `TrainingConfig.lambda_pooled_contrast`), λ_pos = 0.0. The alignment term is optional (enabled via `ema_alignment`). The position-group term is optional (`lambda_pos` > 0 on pipelines such as `acts_in_dropout_pos` / `acts_in_dropout_pos_gu`).
 
 - **L_action**: Focal loss (γ=2.0) with class weights (1/√count, mean 1) on action type and length bin; angle bin uses Focal without extra weights. The fixed count tables live in `losses.py` (`_ACTION_TYPE_COUNTS`, `_LENGTH_BIN_COUNTS`); they should match `event_metadata.parquet` after Phase 1 — if you refresh the corpus, recompute counts from `event_type` / length-bin targets and update those literals (see `DATA_QUALITY.md`).
 - **L_outcome**: BCE for shot/goal head.
@@ -43,8 +43,9 @@ Default weights: λ_outcome = 0.5, λ_contrast = 0.5, λ_pooled = 0.3. The align
   - Temperature τ = 0.05 (default).
 - **L_pooled_uniformity**: Gaussian-potential uniformity loss on **pooled `z_p`** (the embeddings used for similarity search). Pushes all player embeddings apart on the unit hypersphere to widen cosine similarity gaps and prevent embedding collapse. The sensitivity parameter `uniformity_t` (default 2.0) controls how aggressively close pairs are penalized.
 - **L_alignment** (optional): EMA-based cross-batch alignment loss on pooled `z_p`. Encourages a player's current-batch embedding to be consistent with a smoothed historical representation maintained in an EMA memory bank. See the EMA alignment section below.
+- **L_pos_group** (optional): Cross-entropy from a linear head on pooled `z_p` to coarse position group (GK / Def / Mid / Fwd / Unknown). Weight `lambda_pos` (default 0.0). See `SYSTEM_DESIGN.md` (Component 7).
 
-Validation loss uses the **same** formula (including contrastive, pooled uniformity, and alignment when enabled) so the full multi-objective loss is tracked consistently across train and val.
+Validation loss uses the **same** formula (including contrastive, pooled uniformity, alignment when enabled, and position-group loss when `lambda_pos` > 0) so the full multi-objective loss is tracked consistently across train and val.
 
 ---
 

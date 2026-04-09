@@ -251,7 +251,7 @@ python main.py --mode full_eval                             # current tag
 python main.py --mode full_eval_all --eval_output_dir ./evaluations  # all 11 registered pipelines
 ```
 
-**Eleven steps** per pipeline: `inference`, `test_metrics`, `ground_truth`, `position_retrieval`, `split_half` (skipped for GNN), `qualitative_neighbors`, `self_consistency`, `policy_diagnostic`, `empirical_behavioral`, `analysis`, `fifa_comparison`. Outputs: `evaluations/{pipeline_name}/{step_name}/`. Heuristic orchestration: `generate_heuristics`, `eval_heuristics`, `full_eval_all_with_heuristics`.
+**Eleven steps** per pipeline: `inference`, `test_metrics`, `ground_truth`, `position_retrieval`, `split_half` (skipped for GNN), `qualitative_neighbors`, `self_consistency`, `policy_diagnostic`, `empirical_behavioral`, `analysis`, `fifa_comparison`. Outputs: `evaluations/{tag}/{step_name}/` (`config.tag`, or `baseline` when tag is empty — see `run_full_eval` in `main.py`). Heuristic orchestration: `generate_heuristics`, `eval_heuristics`, `full_eval_all_with_heuristics`.
 
 ---
 

@@ -27,7 +27,7 @@ This folder contains phase-by-phase documentation for the player similarity pipe
 | [pseudo_ground_truth.md](pseudo_ground_truth.md) | Curated pseudo ground-truth pairs: who is paired with whom and why (no results) |
 | [PLAYER_SIMILARITY_FINAL_PLAN.md](PLAYER_SIMILARITY_FINAL_PLAN.md) | High-level plan and design notes |
 | [FUTURE_IMPROVEMENTS.md](FUTURE_IMPROVEMENTS.md) | SOTA assessment and roadmap of possible improvements (model, training, data, evaluation, ops) |
-| [models/VIEW_CONSISTENCY.md](models/VIEW_CONSISTENCY.md) | Proposed view-consistency training variant (design note; not in `PIPELINE_REGISTRY`) |
+| [models/VIEW_CONSISTENCY.md](models/VIEW_CONSISTENCY.md) | View-consistency training variant — **design proposal only; not implemented** in `src/` (not in `PIPELINE_REGISTRY`) |
 
 ---
 
