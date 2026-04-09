@@ -7,7 +7,9 @@ Node types
 ──────────
   ``"event"``  — one node per on-ball event in the possession.
                  Features: 126-D Phase 1 vector (Spatial_360 zeroed).
-  ``"player"`` — one node per distinct player (actors + off-ball from 360).
+  ``"player"`` — **actors:** one node per distinct ``player_id`` (key ``("actor", pid)``).
+                 **Off-ball 360:** one node per freeze-frame slot per event
+                 (keys ``("tm", local_ev_idx, k)`` / ``("opp", local_ev_idx, k)``).
                  Features: [position_idx, is_possession_team, dx, dy].
 
 Edge types (relation triplets)

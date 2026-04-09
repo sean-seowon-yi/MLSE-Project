@@ -126,7 +126,7 @@ Left and right positions are kept distinct (not mirrored) so that preferred foot
 
 **Goal**: Group events into possession sequences — continuous spells where one team controls the ball.
 
-Each possession is defined by StatsBomb's `possession_number` and `possession_team_id` within a match. Events within a possession are sorted temporally. Possession-level labels are computed:
+Each possession is defined by StatsBomb's `possession_number` and `possession_team_id` within a match (see `possession_builder.py`: `groupby` on `match_id`, `possession_number`, `possession_team_id` — **`period` is not part of the key**). Events within a group are sorted by `(period, minute, second, original row order)`. Possession-level labels are computed from **those rows only** (Phase 1 may have dropped events without 360 or outside the allowed event types):
 
 - `ends_in_shot` (bool)
 - `ends_in_goal` (bool)
@@ -134,7 +134,7 @@ Each possession is defined by StatsBomb's `possession_number` and `possession_te
 
 Possessions with fewer than 2 events or more than 200 are discarded.
 
-Each possession also stores per-event timestamps with millisecond precision (parsed from StatsBomb's period-relative `timestamp` field, e.g. `"00:23:15.432"` → `1395.432` seconds), used downstream in Phase 3 for computing time-delta edge attributes on temporal edges. Since possessions never span periods, relative deltas within a possession are always correct.
+Each possession also stores per-event timestamps with millisecond precision (parsed from StatsBomb's period-relative `timestamp` field, e.g. `"00:23:15.432"` → `1395.432` seconds), used downstream in Phase 3 for computing time-delta edge attributes on temporal edges. **Caveat:** In rare cases StatsBomb can attach the same `(possession_number, possession_team_id)` across a period boundary (e.g. events straddling half-time). Because the grouping key omits `period`, those rows can land in one `Possession`; consecutive-event Δt can then be large or reflect a stoppage. For almost all open-play sequences, all events in a group share one period and deltas behave as intended.
 
 **Output**: `possessions.pkl` — list of `Possession` objects, each containing global event indices, per-event metadata, and per-event timestamps.
 
@@ -156,7 +156,7 @@ Each possession also stores per-event timestamps with millisecond precision (par
 | Type | Features | Description |
 |---|---|---|
 | `event` | 126-D vector (Spatial_360 block zeroed) | One node per on-ball action in the possession. The 360 summary stats are zeroed so the GNN must learn spatial context from explicit player nodes. |
-| `player` | [position_idx, is_possession_team, dx, dy] | One node per distinct player. **Actor** players (who performed events) get their real position and player_id. **Off-ball** players (from 360 freeze frames) get their spatial offset from the ball. |
+| `player` | [position_idx, is_possession_team, dx, dy] | **Actors:** one node per distinct `player_id` in the possession (`("actor", player_id)` in code), with real position, `dx=dy=0` at the ball. **Off-ball (360):** one node per **freeze-frame slot at each event** — keyed as `("tm", event_index, k)` or `("opp", event_index, k)` in `graph_builder.py`, not merged across events or stable StatsBomb player IDs; each carries `Unknown` position and `(dx, dy)` offset from the ball at that event. |
 
 ### Edge Types (Relations)
 
@@ -182,7 +182,7 @@ The 360 freeze frames are critical: they create context edges that tell the GNN 
 
 - **Why heterogeneous graphs (not sequences)**: A possession is more than a sequence of events. Each event involves an actor, and that event occurs in the context of where all other players are standing. A flat sequence model (LSTM, Transformer over events) would need the 360 spatial context injected as auxiliary features on each event — losing the explicit structure of "player X is 5 metres to the left." A heterogeneous graph natively encodes: temporal ordering (event → event edges), who did what (player ↔ event edges), and who was where (teammate / opponent context → event edges). The GNN can then reason about all of these simultaneously.
 - **Why separate node types for events and players**: Events and players are fundamentally different entities. An event has 126 features describing what happened; a player node has 4 features describing who they are and where they stand. Heterogeneous typing lets the model learn separate projection and attention parameters for each, rather than forcing both into a single feature space.
-- **Why off-ball players get `Unknown` position**: Off-ball players from 360 freeze frames don't carry position labels in the StatsBomb data — only the actor's position is known. Rather than guessing or omitting them, they receive the `Unknown` position embedding (learned from data), and their spatial offset (dx, dy) from the ball carries the crucial information about where they are.
+- **Why off-ball context is one node per (event, slot)**: A single physical opponent could appear at different offsets at successive events; reusing one node per player would overwrite geometry. The builder therefore instantiates **separate** context nodes per event and per teammate/opponent slot in the freeze frame (see `_process_freeze_frame` in `graph_builder.py`). They use the `Unknown` position embedding (freeze-frame entries are not given tactical positions like the actor), and `(dx, dy)` from the ball encodes where they stand for that snapshot.
 - **Why actor players get dx=0, dy=0**: The actor is at the ball by definition. Their spatial information is already encoded in the event node's location. The actor node's value comes from the position embedding and team flag, not spatial offset.
 - **Why bidirectional temporal edges**: The `next` edges propagate information forward in time (what happened earlier informs the current state). The `prev` edges propagate backward (the eventual outcome of the possession influences the interpretation of earlier events). Together they let every event node attend to the full temporal context of the possession.
 - **Why time-delta edge attributes on temporal edges**: The graph structure encodes *ordering* but not *tempo*. A pass-carry-pass in 2 seconds (counterattack) and the same sequence over 15 seconds (slow buildup) produce identical graph structures but represent fundamentally different situations requiring different player decisions. The time delta gives the GNN's attention mechanism a direct signal about urgency and rhythm. Normalising by 30 seconds and clipping at 1.0 gives good resolution in the 0-30s range while clearly flagging gaps where intermediate events were filtered out.

@@ -64,7 +64,7 @@ Build a **PyG `HeteroData` graph per possession**:
 
 - **Node types:**
   - `event`: one node per on-ball event, features = 126‑D vector with the 9‑D Spatial_360 block **zeroed** (`mask_spatial_360`).  
-  - `player`: one node per distinct player in the possession (actors + off-ball 360 players), features = `[position_idx, is_possession_team, dx, dy]`, where `dx, dy` are relative to the ball.
+  - `player`: **actors** — one node per distinct `player_id` in the possession; **360 context** — one node per teammate/opponent **slot per event** (not deduplicated across events). Features = `[position_idx, is_possession_team, dx, dy]` relative to the ball (`dx=dy=0` for actors).
 
 - **Edge types:**
   - `("event", "next", "event")`: temporal edges `e_t → e_{t+1}` with **1‑D time‑delta edge_attr**, `min(Δt/30,1.0)`.  

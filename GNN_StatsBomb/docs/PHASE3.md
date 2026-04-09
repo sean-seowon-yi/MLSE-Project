@@ -7,7 +7,7 @@ Phase 3 converts each possession into a **heterogeneous graph** (`HeteroData`) t
 ## Goal
 
 - One **event** node per on-ball action in the possession (features: 126-D with Spatial_360 block **zeroed**).
-- One **player** node per distinct actor or off-ball (360) player; features include position (or Unknown for off-ball), team flag, and spatial offset (dx, dy) from the ball.
+- **Player** nodes: one node per **actor** `player_id` in the possession, plus **one node per off-ball freeze-frame slot per event** (teammate/opponent indices at that event); features include position (or Unknown for context nodes), team flag, and spatial offset (dx, dy) from the ball.
 - **Edges**: temporal (`next`/`prev` with time-delta attribute), actor-event (`acts_in`/`performed_by`), and 360 context (`context_for` by default; optionally split into `context_for_tm` / `context_for_opp` via `--split_context_edges`).
 - Output a list of `HeteroData` graphs for training and inference.
 
@@ -36,7 +36,7 @@ Phase 3 converts each possession into a **heterogeneous graph** (`HeteroData`) t
 | Type | Features | Description |
 |------|----------|-------------|
 | **event** | 126-D (Spatial_360 block zeroed) | One node per on-ball event. The GNN must use player nodes for spatial context, not the 360 summary in the event vector. |
-| **player** | [position_idx, is_possession_team, dx, dy] | One per distinct player. **Actors**: real position, player_id; dx=0, dy=0. **Off-ball** (360): Unknown position, spatial offset from ball. |
+| **player** | [position_idx, is_possession_team, dx, dy] | **Actors:** one node per distinct `player_id` (`("actor", pid)`). **Off-ball 360:** one node per slot per event (`("tm"/"opp", local_event_idx, k)` in `graph_builder.py`); Unknown position; `(dx, dy)` from ball at that event. |
 
 ---
 

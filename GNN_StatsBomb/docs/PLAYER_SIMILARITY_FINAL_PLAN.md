@@ -140,6 +140,8 @@ We identify a possession by the key:
 
 - `pos_key = (match_id, possession, possession_team_id)`.
 
+**Implementation detail:** `period` is **not** part of this key in `possession_builder.py`. Sorting uses `period` so ordering is still valid if the same `(possession, possession_team_id)` ever appears across a period boundary (rare).
+
 ### 4.2 Construction procedure
 
 Input: Phase 1 outputs `event_features.npy` and `event_metadata.parquet` (or an equivalent DataFrame with the same content).
@@ -195,12 +197,9 @@ For each possession:
 
 #### 5.1.2 Player nodes
 
-- One **player node** per player participating in the possession:
-  - Any player who performs at least one event in that possession.
-  - Plus **off-ball teammates and opponents** appearing only in the 360 freeze frames:
-    - For each event with 360:
-      - For every `freeze_frame` entry where `teammate` or `!teammate` and not `actor`, create (or reuse) a player node representing that off-ball player (distinguished by `(match_id, team_id, player_id)` within the possession when available).
-    - If 360 does not include stable player IDs for some off-ball entries, treat them as anonymous “slots” (e.g. “teammate #k”) with position-based features.
+- **Actor nodes:** one node per distinct `player_id` who performs at least one retained event in that possession (key `("actor", player_id)` in `graph_builder.py`). Same actor across multiple events reuses that node; `(dx, dy)` stay at the ball.
+
+- **Off-ball (360) context nodes:** for each event, for every `freeze_frame` entry that is not `actor`, the implementation creates **a new node** for that slot at **that event only** — keys `("tm", local_event_index, k)` and `("opp", local_event_index, k)` for the k-th teammate/opponent slot. This matches StatsBomb’s practice of anonymous freeze-frame players (`player_node_pids = -1`); geometry is correct per snapshot and not merged across time. Optional future design: deduplicate by stable ID and put `(dx, dy)` on `context_for` edge attributes instead.
 
 - Player node features (for current version):
   - **Role / position embedding**:
@@ -229,15 +228,15 @@ Within each possession graph:
 2. **Actor edges (`E_actor`)**:
    - For each event `e` with `player_id = p`:
      - Connect `player_p ↔ event_e`.
-   - One player node per player; multiple events connect to the same node.
-   - This allows player nodes to aggregate information from all their actions.
+   - **Actors:** one node per distinct `player_id`; multiple events attach to the same actor node.
+   - This allows actor nodes to aggregate information from all their touches in the possession.
 
 3. **Context edges (`E_context`)** (crucial):
    - For each event `e` with a 360 frame:
-     - For each **off-ball teammate** node visible in 360:
-       - Add edge `player_teammate → event_e`.
-     - For each **off-ball opponent** node visible in 360:
-       - Add edge `player_opponent → event_e`.
+     - For each **off-ball teammate slot** in that frame (one node per slot at `e`, not shared across events):
+       - Add edge `player_teammate_slot → event_e`.
+     - For each **off-ball opponent slot** likewise:
+       - Add edge `player_opponent_slot → event_e`.
    - These edges let the event embedding “see”:
      - Availability and position of passing options (teammates).
      - Local defensive pressure and blocking (opponents).

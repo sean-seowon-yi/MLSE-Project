@@ -6,8 +6,7 @@ Phase 2 groups events into **possession sequences** — continuous spells where 
 
 ## Goal
 
-- Group events by StatsBomb `possession_number` and `possession_team_id` within each match.
-- Sort events within each possession by time.
+- Group events by StatsBomb `possession_number` and `possession_team_id` within each match (**`period` is not in the group key**; see `possession_builder.py`). Sort each group by `(period, minute, second, original index)`.
 - Compute possession-level labels: `ends_in_shot`, `ends_in_goal`, `total_xg`.
 - Store per-event timestamps (period-relative seconds with millisecond precision) for Phase 3 temporal edge attributes.
 - Filter out possessions that are too short or too long.
@@ -21,7 +20,9 @@ Phase 2 groups events into **possession sequences** — continuous spells where 
 | **event_metadata.parquet** | From Phase 1: one row per event with `match_id`, `player_id`, `event_type`, `period`, `minute`, `second`, etc. |
 | **Event indices** | Global event indices aligned with `event_features.npy` and `event_metadata.parquet` row order. |
 
-Possession membership comes from StatsBomb event fields: `possession_number` and `possession_team_id`.
+Possession membership comes from StatsBomb event fields: `possession_number` and `possession_team_id`. Rows are whatever Phase 1 retained (360-only matches and events when `use_360=True`, plus event-type and quality filters), so a “possession” here is a **subsample** of StatsBomb’s full possession, not every raw event in that spell.
+
+Rarely, the same `(possession_number, possession_team_id)` can appear in more than one `period` in source data; those rows are still one group. Possession-level labels (`ends_in_shot`, `ends_in_goal`, `total_xg`) are computed only from events **in that group**, not from dropped or missing rows.
 
 ---
 
