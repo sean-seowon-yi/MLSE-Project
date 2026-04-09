@@ -1,4 +1,5 @@
 # MLSE-Project — Player Similarity in Soccer
+## Situation-Aware Player Similarity via Trait–State Decomposition on Heterogeneous Graphs
 
 **STA2453 Project: Player Similarity.**  
 This repository contains end-to-end pipelines to learn **player embeddings** and find **similar players** in soccer from:
