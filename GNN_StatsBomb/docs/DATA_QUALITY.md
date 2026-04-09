@@ -48,6 +48,8 @@ Based on a 50-match sample:
 
 The pipeline targets **player similarity**: event features and 360 spatial context are defined so that (1) left and right roles (e.g. Left Wing vs Right Wing) are kept distinct by default to reflect preferred foot and tactical side, (2) spatial features reflect pressure/support/density from freeze frames, and (3) event types, positions, and pitch zones match football semantics. Downstream, events are grouped by `player_id` (in `event_metadata.parquet`) to build player-level representations for similarity.
 
+Phase 2 possessions are **groups of retained Phase 1 rows** keyed by StatsBomb `possession_number` and `possession_team_id` (not by `period`); they are a subsample of the full raw possession when events lack 360 or fail filters. Phase 3 **actor** nodes deduplicate by `player_id`; **360 context** uses one node per teammate/opponent **slot per event** (`graph_builder._process_freeze_frame`), matching anonymous freeze-frame entries.
+
 ## Result
 
 - No NaN or Inf in the feature matrix.
