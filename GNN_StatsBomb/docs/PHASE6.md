@@ -131,7 +131,7 @@ Self-cosine (mean/median/std), cross-cosine, cosine margin, self-retrieval ranks
 
 ## 6E: Policy diagnostic (`--mode policy_diagnostic`)
 
-Three diagnostics testing whether cosine similarity corresponds to actual behavioral similarity:
+Three diagnostics testing whether cosine similarity corresponds to actual behavioral similarity. When the model builds the situation embedding `h_event` for these probes, it uses **`encode_possession_counterfactual`** (same as Phase 7): **`acts_in` edges are omitted** so actor identity is not injected into the event node before swapping `z_p` via FiLM. See `docs/PHASE7.md` and `docs/FUTURE_IMPROVEMENTS.md` §8.
 
 ### 1. Policy distance correlation
 

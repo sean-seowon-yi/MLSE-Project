@@ -83,6 +83,17 @@ The model constructor accepts an optional `graph_config` parameter to configure 
 
 ---
 
+## Encoding API: full graph vs counterfactual-safe
+
+| Method | `acts_in` edges | Typical use |
+|--------|-----------------|-------------|
+| `encode_possession` | **Included** | Training, validation, any path that needs the same message passing as `forward` without heads. |
+| `encode_possession_counterfactual` | **Dropped** | Phase 7 situation comparison, policy diagnostic, and related tools: extract `h_event` **without** the player→event channel that injects actor identity into the event node. `(event, performed_by, player)` and context/temporal edges remain. |
+
+See `docs/PHASE7.md` and `docs/FUTURE_IMPROVEMENTS.md` §8 for rationale, training-vs-analysis scope, and optional further hardening.
+
+---
+
 ## Code
 
 | Component | Location |

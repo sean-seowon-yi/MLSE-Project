@@ -772,9 +772,11 @@ For each query player:
 
 1. Find top-5 nearest neighbours from Phase 6
 2. Sample 5 real game events from the query player's possessions
-3. For each event, extract `h_event` (the situation encoding) from the GNN
+3. For each event, extract `h_event` (the situation encoding) using **`encode_possession_counterfactual`**: the GNN runs **without** `(player, acts_in, event)` edges so actor identity does not message into the event node before trait substitution; see `PlayerSimilarityModel` in `src/phase4_model/model.py` and `docs/PHASE7.md`
 4. Substitute each player's global `z_p` and run through FiLM + action heads
 5. Compare the predicted action distributions
+
+**Note:** Training still uses the full graph (including `acts_in`). Optional stricter actor-agnostic encodings are discussed in `docs/FUTURE_IMPROVEMENTS.md` §8.
 
 This produces:
 

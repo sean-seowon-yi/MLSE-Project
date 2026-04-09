@@ -1,13 +1,25 @@
 # Phase 7: Situation-Level Analysis
 
-Phase 7 validates **player similarity** in concrete situations: for a query player and their top similar players, it compares **predicted action distributions** in the same game states (same h_event, different z_p via FiLM).
+Phase 7 validates **player similarity** in concrete situations: for a query player and their top similar players, it compares **predicted action distributions** in the same game states (same `h_event`, different `z_p` via FiLM).
+
+---
+
+## Counterfactual-safe situation encoding (`h_event`)
+
+**Problem (historical):** If `(player, acts_in, event)` message passing is active, the actor’s identity (via player-node features) can flow **into** `h_event` before FiLM. Swapping another player’s `z_p` then mixes “what the situation looks like if *they* were the actor in the graph” with “what they would do if only FiLM changed” — a **counterfactual leak**.
+
+**What the code does:** `SituationComparator` calls `PlayerSimilarityModel.encode_possession_counterfactual` (see `src/phase4_model/model.py`). That forward **removes** `acts_in` edges only; temporal edges, `performed_by`, and 360 `context_for*` edges stay so the graph remains usable. Policy diagnostic and possession animation use the same pattern (diagnostic directly; animation via `SituationComparator`).
+
+**Scope:** This does **not** change **training**, which still uses the full graph (including `acts_in`) through `forward` / `encode_possession` — appropriate for imitation learning.
+
+**Residual nuance (doc sync):** Keeping `(event, performed_by, player)` means the actor node is still in the computation graph; only the direct **player → event** actor channel is removed. Further hardening (e.g. stricter actor-free encoders) is optional and not implemented. See `docs/FUTURE_IMPROVEMENTS.md` §8.
 
 ---
 
 ## Goal
 
 - For a query player: get top-k similar players from Phase 6.
-- Sample real events from the query player’s possessions; for each, get the **situation encoding** h_event from the GNN.
+- Sample real events from the query player’s possessions; for each, get **`h_event`** from the GNN via **`encode_possession_counterfactual`** (not the training-time full graph).
 - For each such situation, substitute each candidate player’s z_p, run FiLM + action heads, and compare predicted action type, direction, and length.
 - Produce **reports** (text) and **plots** (bar charts, PCA of embeddings) to interpret similarity.
 
